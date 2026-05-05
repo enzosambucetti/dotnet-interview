@@ -1,0 +1,10 @@
+@ExternalApi_HostAddress = http://localhost:5090
+
+GET {{ExternalApi_HostAddress}}/todolists
+Accept: application/json
+
+###
+
+POST {{ExternalApi_HostAddress}}/__test/reset
+
+###
