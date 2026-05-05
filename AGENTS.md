@@ -78,6 +78,55 @@ dotnet run --project TodoApi --launch-profile TodoApi
 
 If the checked-in `LocalSql` connection string matches the machine, only `DatabaseTarget=LocalSql` is needed.
 
+### Clearing Local TodoApi Database Data
+
+Use `scripts/Clear-TodoApiDatabase.ps1` to delete application data from the configured SQL Server database without dropping the schema or EF migrations.
+
+Default cleaned tables:
+
+- `dbo.SyncEvents`
+- `dbo.Items`
+- `dbo.TodoList`
+
+The script preserves:
+
+- `__EFMigrationsHistory`
+- table schema
+- stored migrations
+- Hangfire tables by default
+
+Clean the default configured target from `TodoApi/appsettings.json`:
+
+```powershell
+.\scripts\Clear-TodoApiDatabase.ps1
+```
+
+Clean Docker SQL Server explicitly:
+
+```powershell
+.\scripts\Clear-TodoApiDatabase.ps1 -DatabaseTarget DockerSql
+```
+
+Clean local SQL Server explicitly:
+
+```powershell
+.\scripts\Clear-TodoApiDatabase.ps1 -DatabaseTarget LocalSql
+```
+
+Clean using an explicit connection string:
+
+```powershell
+.\scripts\Clear-TodoApiDatabase.ps1 -ConnectionString "Server=localhost,1433;Database=Todos;User Id=sa;Password=Password123;TrustServerCertificate=True;"
+```
+
+Optionally also clear Hangfire runtime tables:
+
+```powershell
+.\scripts\Clear-TodoApiDatabase.ps1 -DatabaseTarget DockerSql -IncludeHangfire
+```
+
+Use `-IncludeHangfire` only when no TodoApi/Hangfire server instance is actively processing jobs.
+
 ### ExternalApi
 
 `ExternalApi` does not use a database. It stores deterministic data in memory through a singleton store and resets on process restart.
@@ -101,6 +150,46 @@ Development-only reset endpoint:
 POST /__test/reset
 ```
 
+## Postman Collections
+
+Manual API and sync validation is covered by:
+
+- `TodoApi/PostmanCollections/TodoApi.Sync.postman_collection.json`
+
+Collection name:
+
+- `TodoApi Sync Manual Tests`
+
+The collection contains three folders:
+
+- `TodoApi - Base Cases`: CRUD coverage for the local `/api/todolists` and nested `/api/todolists/{id}/items` endpoints.
+- `ExternalApi - Base Cases`: direct calls to the fake external API, including reset, list CRUD, and item CRUD through the local test extension.
+- `Sync Flow - Manual E2E`: numbered manual flow for outbound and inbound synchronization checks between `TodoApi` and `ExternalApi`.
+
+Collection variables:
+
+- `todoApiBaseUrl`: default `http://localhost:5083`
+- `externalApiBaseUrl`: default `http://localhost:5090`
+- `todoListId`
+- `itemId`
+- `externalListId`
+- `externalItemId`
+
+Before running the sync flow manually:
+
+1. Start SQL Server and apply migrations.
+2. Start `ExternalApi`.
+3. Start `TodoApi`.
+4. Reset external data with `POST /__test/reset` or the `00 - Reset ExternalApi` request.
+
+For inbound sync steps, either wait for the recurring Hangfire job, which runs every 1 minute, or trigger it manually from the dashboard:
+
+```http
+http://localhost:5083/hangfire
+```
+
+Use `Recurring Jobs -> todoapi-inbound-sync -> Trigger now`.
+
 ## Synchronized Models
 
 There are two logical entities to synchronize between `TodoApi` and `ExternalApi`.
@@ -113,11 +202,13 @@ Properties:
 
 - `Id: long`
 - `SourceId: string?`, JSON `source_id`
+- `ExternalId: string?`, JSON `external_id`
 - `Name: string`
 - `CreatedAt: DateTimeOffset`, JSON `created_at`
 - `UpdatedAt: DateTimeOffset`, JSON `updated_at`
 - `IsDeleted: bool`, JSON `is_deleted`
 - `DeletedAt: DateTimeOffset?`, JSON `deleted_at`
+- Detail response only: `Items: IList<Item>`, JSON `items`
 
 External model: `ExternalApi.Models.TodoList`
 
@@ -135,7 +226,8 @@ Mapping guidance:
 - Local `TodoList.Id` is the local numeric identity.
 - External `TodoList.id` is the external string identity.
 - `source_id` is the cross-system correlation field.
-- Local `TodoList` does not embed items in its API response; external `TodoList` does.
+- Local `GET /api/todolists/{id}` returns a detail DTO with embedded local `items`.
+- Local `GET /api/todolists` does not embed items; external `GET /todolists` does.
 
 ### Todo Item
 
@@ -145,6 +237,7 @@ Properties:
 
 - `Id: long`
 - `SourceId: string?`, JSON `source_id`
+- `ExternalId: string?`, JSON `external_id`
 - `Name: string`
 - `IsCompleted: bool`
 - `CreatedAt: DateTimeOffset`, JSON `created_at`
@@ -188,6 +281,7 @@ Todo list DTOs:
 
 - `CreateTodoList`: `source_id`, `name`, `created_at`, `updated_at`
 - `UpdateTodoList`: `source_id`, `name`, `updated_at`
+- `TodoListDetail`: list fields plus `items`
 
 Items controller: `TodoApi.Controllers.ItemsController`
 
@@ -247,6 +341,63 @@ External API behavior:
 - External IDs are deterministic strings like `ext-list-001` and `ext-item-001`.
 - Seed timestamps and runtime mutation timestamps are deterministic for repeatable sync tests.
 
+### ExternalApi Seed Data
+
+`ExternalApi` stores data in memory. On process startup and on `POST /__test/reset`, `ExternalTodoStore.Reset()` restores this exact seed:
+
+```json
+[
+  {
+    "id": "ext-list-001",
+    "source_id": "local-list-1",
+    "name": "External Work",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:00:00+00:00",
+    "items": [
+      {
+        "id": "ext-item-001",
+        "source_id": "local-item-1",
+        "description": "Review sync design",
+        "completed": false,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "id": "ext-item-002",
+        "source_id": "local-item-2",
+        "description": "Prepare demo data",
+        "completed": true,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00"
+      }
+    ]
+  },
+  {
+    "id": "ext-list-002",
+    "source_id": "local-list-2",
+    "name": "External Personal",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:00:00+00:00",
+    "items": [
+      {
+        "id": "ext-item-003",
+        "source_id": "local-item-3",
+        "description": "Buy coffee",
+        "completed": false,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00"
+      }
+    ]
+  }
+]
+```
+
+After reset, deterministic counters are:
+
+- Next list id: `ext-list-003`.
+- Next item id: `ext-item-004`.
+- Next mutation timestamp: `2026-01-01T00:01:00+00:00`, then one minute is added per mutation.
+
 ## Persistence And Migrations
 
 `TodoApi` uses EF Core SQL Server through `TodoContext`.
@@ -262,6 +413,22 @@ Important migrations:
 - `20260428183225_CreateItems`
 - `20260505013854_AddSynchronizationProperties`
 - `20260505020118_AddSoftDeleteProperties`
+- `20260505023943_AddSyncEventsAndExternalIds`
+
+Sync tables:
+
+- `SyncEvents`: source of truth/audit for outbound synchronization.
+
+Hangfire tables are execution infrastructure only. Do not use Hangfire job state as domain sync state.
+
+Sync event statuses:
+
+- `Pending`: waiting to run, or waiting on another local sync event to provide a dependency.
+- `Processing`: currently running.
+- `Completed`: done, idempotently resolved, or canceled because the event became obsolete.
+- `FailedRetryable`: failed with a transient or recoverable condition and can be re-enqueued by recovery.
+- `FailedTerminal`: failed with a deterministic non-retryable condition.
+- `Failed`: legacy retryable status; keep recovery compatibility for existing rows.
 
 When adding persisted properties to synchronized entities:
 
@@ -306,7 +473,7 @@ Expected future approach:
 
 - Log the exception with a stable sync event id.
 - Store the failure in sync state, for example `SyncEvent.LastError`.
-- Mark sync status as `Failed` or `Pending` depending on retry policy.
+- Mark sync status as `FailedRetryable`, `FailedTerminal`, or `Pending` depending on retry policy.
 - Keep enough correlation data to connect logs, sync event rows, and affected entities.
 
 ## Test Structure
@@ -318,8 +485,12 @@ Current test layers:
 - `TodoApi.Tests/Models`: entity/property serialization tests.
 - `TodoApi.Tests/Integration`: controller + service integration tests with only repositories mocked/faked.
 - `TodoApi.Tests/Middleware`: HTTP middleware behavior tests.
+- `TodoApi.Tests/Sync`: sync event publisher and outbound/inbound job tests.
+- `TodoApi.Tests/E2E`: in-process API-to-API sync tests with `WebApplicationFactory`.
 
 Integration tests should avoid EF InMemory for the first version. Mock or fake only repository interfaces and exercise controller + service behavior together.
+
+E2E sync tests are allowed to use an isolated EF InMemory database for the in-process `TodoApi` host. They should not wait for Hangfire timers. Instead, call the local HTTP API, read the created `SyncEvent`, execute the relevant sync job directly, and verify the opposite API over HTTP.
 
 ## Verification
 
@@ -342,10 +513,51 @@ Avoid running `dotnet build` and `dotnet test` at the same time for this solutio
 
 - Treat `TodoApi` as the local system and `ExternalApi` as the fake external system.
 - Use `source_id` as the correlation field, but preserve each system's native ID.
+- Use local `ExternalId` to store the external API resource id needed for PATCH/DELETE.
 - Do not assume ID types match: local IDs are `long`, external IDs are `string`.
 - Normalize item names carefully: local `Name` equals external `description`.
 - Normalize completion carefully: local `IsCompleted` equals external `completed`.
 - External deletes are hard deletes in the fake API. If sync needs deletion detection later, add explicit local tracking rather than inferring from absent rows without a policy.
 - Local deletes are soft deletes for recovery. Synchronization logic must decide separately whether and when to propagate soft-deleted local records as hard deletes to the external API.
+- Outbound create/update `404` responses should trigger inbound reconciliation. Complete the outbound `SyncEvent` only when reconciliation confirms the local entity, or the parent list for item events, is now soft-deleted because the external record disappeared.
+- Outbound item create/update events must wait in `Pending` when the parent TodoList does not yet have `ExternalId`.
+- Outbound update events without `ExternalId` may wait in `Pending` only when a matching create event is still pending or retryable; otherwise mark them `FailedTerminal`.
+- Outbound create/update events for soft-deleted entities, or items whose parent list is soft-deleted, are obsolete and should complete without external calls.
+- Outbound deletes without `ExternalId` should complete successfully because there is no known external target.
+- Ambiguous outbound create failures, such as timeout, transport error, external `5xx`, or external `409`, should run inbound reconciliation by `source_id` before retrying or failing.
 - External `GET /todolists` is the most efficient read because it returns lists and items together.
-- Local API currently requires separate item reads per list.
+- Local `GET /api/todolists/{id}` returns the selected list with its active items. Local `GET /api/todolists` still returns lists without embedded items.
+
+## Hangfire Sync
+
+TodoApi uses Hangfire for synchronization execution:
+
+- Outbound sync is event-driven. Local mutations create `SyncEvents` and enqueue outbound jobs.
+- Inbound sync is polling-based through a recurring Hangfire job every 1 minute because ExternalApi has no webhook/events.
+- A recovery recurring job runs every 1 minute and re-enqueues retryable `Pending`, `FailedRetryable`, and legacy `Failed` sync events while attempts are below the max.
+- Outbound create/update `404` responses run inbound reconciliation immediately. If inbound confirms external deletion through local soft delete, the outbound event is completed instead of retried to the max attempt limit.
+- `FailedTerminal` events are not re-enqueued automatically.
+
+Development dashboard:
+
+```http
+/hangfire
+```
+
+External API configuration lives under:
+
+```json
+"ExternalApi": {
+  "BaseUrl": "http://localhost:5090",
+  "TimeoutSeconds": 10,
+  "MaxRetries": 3
+}
+```
+
+The fake `ExternalApi` includes a local test extension for standalone item creation:
+
+```http
+POST /todolists/{todolistId}/todoitems
+```
+
+This endpoint is not part of the original challenge contract; it exists to exercise outbound `ItemCreated`.

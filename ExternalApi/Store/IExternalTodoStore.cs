@@ -9,6 +9,7 @@ public interface IExternalTodoStore
     TodoList CreateTodoList(CreateTodoListBody body);
     TodoList? UpdateTodoList(string todoListId, UpdateTodoListBody body);
     bool DeleteTodoList(string todoListId);
+    TodoItem? CreateTodoItem(string todoListId, CreateTodoItemBody body);
     TodoItem? UpdateTodoItem(string todoListId, string todoItemId, UpdateTodoItemBody body);
     bool DeleteTodoItem(string todoListId, string todoItemId);
     void Reset();

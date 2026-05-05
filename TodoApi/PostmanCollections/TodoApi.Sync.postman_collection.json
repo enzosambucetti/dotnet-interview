@@ -1,0 +1,720 @@
+{
+  "info": {
+    "_postman_id": "3f36d32d-3443-4ea8-94f6-0a7c7af85d0d",
+    "name": "TodoApi Sync Manual Tests",
+    "description": "Manual Postman collection for TodoApi, ExternalApi, and the end-to-end sync test flow.\n\nExpected local services:\n- TodoApi: http://localhost:5083\n- ExternalApi: http://localhost:5090\n- Hangfire dashboard: http://localhost:5083/hangfire\n- SQL Server: localhost:1433\n\nStartup commands:\n- docker compose -f .devcontainer/docker-compose.yml up -d sqlserver\n- dotnet ef database update --project TodoApi --startup-project TodoApi\n- dotnet run --project ExternalApi --launch-profile http\n- dotnet run --project TodoApi --launch-profile TodoApi\n\nFor inbound sync steps, either wait for the recurring Hangfire job or trigger it manually from /hangfire: Recurring Jobs -> todoapi-inbound-sync -> Trigger now.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "todoApiBaseUrl",
+      "value": "http://localhost:5083"
+    },
+    {
+      "key": "externalApiBaseUrl",
+      "value": "http://localhost:5090"
+    },
+    {
+      "key": "todoListId",
+      "value": ""
+    },
+    {
+      "key": "itemId",
+      "value": ""
+    },
+    {
+      "key": "externalListId",
+      "value": ""
+    },
+    {
+      "key": "externalItemId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "TodoApi - Base Cases",
+      "item": [
+        {
+          "name": "List TodoLists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        },
+        {
+          "name": "Create TodoList",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('TodoList created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('todoListId', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman local list\"\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        },
+        {
+          "name": "Get TodoList",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
+          }
+        },
+        {
+          "name": "Update TodoList",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman local list updated\"\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
+          }
+        },
+        {
+          "name": "Create Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Item created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('itemId', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman local item\",\n  \"isCompleted\": false\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
+          }
+        },
+        {
+          "name": "List Items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
+          }
+        },
+        {
+          "name": "Get Item",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
+          }
+        },
+        {
+          "name": "Update Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman local item updated\",\n  \"isCompleted\": true\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
+          }
+        },
+        {
+          "name": "Delete Item",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
+          }
+        },
+        {
+          "name": "Delete TodoList",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ExternalApi - Base Cases",
+      "item": [
+        {
+          "name": "Reset ExternalApi Data",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/__test/reset"
+          }
+        },
+        {
+          "name": "List External TodoLists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "Create External TodoList",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('External TodoList created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('externalListId', body.id);",
+                  "if (body.items && body.items.length > 0) {",
+                  "  pm.collectionVariables.set('externalItemId', body.items[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_id\": null,\n  \"name\": \"Postman external list\",\n  \"items\": [\n    {\n      \"source_id\": null,\n      \"description\": \"Postman external item\",\n      \"completed\": false\n    }\n  ]\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "Update External TodoList",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman external list updated\"\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
+          }
+        },
+        {
+          "name": "Create External TodoItem",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('External TodoItem created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('externalItemId', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_id\": null,\n  \"description\": \"Postman external added item\",\n  \"completed\": false\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems"
+          }
+        },
+        {
+          "name": "Update External TodoItem",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Postman external item updated\",\n  \"completed\": true\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems/:externalItemId"
+          }
+        },
+        {
+          "name": "Delete External TodoItem",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems/:externalItemId"
+          }
+        },
+        {
+          "name": "Delete External TodoList",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sync Flow - Manual E2E",
+      "description": "Run these requests in order. For outbound steps, wait a few seconds or inspect Hangfire. For inbound steps, trigger `todoapi-inbound-sync` manually from the Hangfire dashboard or wait for the 1 minute recurring job.",
+      "item": [
+        {
+          "name": "00 - Reset ExternalApi",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/__test/reset"
+          }
+        },
+        {
+          "name": "01 - Outbound Create Local TodoList",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Local TodoList created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('todoListId', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Local groceries\"\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        },
+        {
+          "name": "02 - Verify TodoList Arrived In ExternalApi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "const created = lists.find(x => x.name === 'Local groceries');",
+                  "pm.test('ExternalApi contains Local groceries', function () {",
+                  "  pm.expect(created).to.not.be.undefined;",
+                  "});",
+                  "if (created) {",
+                  "  pm.collectionVariables.set('externalListId', created.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "03 - Verify Local TodoList Has ExternalId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('Local TodoList has ExternalId', function () {",
+                  "  pm.expect(body.external_id || body.externalId).to.not.be.empty;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
+          }
+        },
+        {
+          "name": "04 - Outbound Create Local Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Local Item created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('itemId', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Milk\",\n  \"isCompleted\": false\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
+          }
+        },
+        {
+          "name": "05 - Verify Item Arrived In ExternalApi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "const list = lists.find(x => x.name === 'Local groceries');",
+                  "const item = list && list.items ? list.items.find(x => x.description === 'Milk') : null;",
+                  "pm.test('ExternalApi contains Milk item', function () {",
+                  "  pm.expect(item).to.not.be.undefined;",
+                  "});",
+                  "if (item) {",
+                  "  pm.collectionVariables.set('externalItemId', item.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "06 - Outbound Update Local TodoList",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Local groceries updated\"\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
+          }
+        },
+        {
+          "name": "07 - Verify TodoList Update In ExternalApi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "pm.test('ExternalApi contains updated local list', function () {",
+                  "  pm.expect(lists.some(x => x.name === 'Local groceries updated')).to.equal(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "08 - Outbound Update Local Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Milk updated\",\n  \"isCompleted\": true\n}"
+            },
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
+          }
+        },
+        {
+          "name": "09 - Verify Item Update In ExternalApi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "const list = lists.find(x => x.name === 'Local groceries updated');",
+                  "const item = list && list.items ? list.items.find(x => x.description === 'Milk updated') : null;",
+                  "pm.test('ExternalApi contains updated item', function () {",
+                  "  pm.expect(item).to.not.be.undefined;",
+                  "  pm.expect(item.completed).to.equal(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "10 - Inbound Create External TodoList",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('External TodoList created for inbound sync', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('externalListId', body.id);",
+                  "if (body.items && body.items.length > 0) {",
+                  "  pm.collectionVariables.set('externalItemId', body.items[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_id\": null,\n  \"name\": \"External work\",\n  \"items\": [\n    {\n      \"source_id\": null,\n      \"description\": \"External task\",\n      \"completed\": false\n    }\n  ]\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "11 - Verify External TodoList Imported Locally",
+          "description": "Before running this request, trigger `todoapi-inbound-sync` in Hangfire or wait up to 1 minute.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "pm.test('TodoApi contains inbound imported list', function () {",
+                  "  pm.expect(lists.some(x => x.name === 'External work')).to.equal(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        },
+        {
+          "name": "12 - Inbound Update External TodoList",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"External work updated\"\n}"
+            },
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
+          }
+        },
+        {
+          "name": "13 - Verify External Update Imported Locally",
+          "description": "Before running this request, trigger `todoapi-inbound-sync` in Hangfire or wait up to 1 minute.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "pm.test('TodoApi contains updated inbound list', function () {",
+                  "  pm.expect(lists.some(x => x.name === 'External work updated')).to.equal(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        },
+        {
+          "name": "14 - Outbound Delete Local Item",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
+          }
+        },
+        {
+          "name": "15 - Verify Deleted Item Missing In ExternalApi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "const list = lists.find(x => x.name === 'Local groceries updated');",
+                  "const item = list && list.items ? list.items.find(x => x.description === 'Milk updated') : null;",
+                  "pm.test('ExternalApi no longer contains deleted item', function () {",
+                  "  pm.expect(item).to.be.undefined;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists"
+          }
+        },
+        {
+          "name": "16 - Inbound Delete External TodoList",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
+          }
+        },
+        {
+          "name": "17 - Verify External Delete Reflected Locally",
+          "description": "Before running this request, trigger `todoapi-inbound-sync` in Hangfire or wait up to 1 minute.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const lists = pm.response.json();",
+                  "pm.test('TodoApi no longer returns soft-deleted inbound list', function () {",
+                  "  pm.expect(lists.some(x => x.name === 'External work updated')).to.equal(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{todoApiBaseUrl}}/api/todolists"
+          }
+        }
+      ]
+    }
+  ]
+}

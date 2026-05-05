@@ -22,6 +22,13 @@ public class TodoListsRepository : ITodoListsRepository
         return _context.TodoList.FirstOrDefaultAsync(todoList => todoList.Id == id);
     }
 
+    public Task<TodoList?> GetTodoListWithItemsAsync(long id)
+    {
+        return _context.TodoList
+            .Include(todoList => todoList.Items)
+            .FirstOrDefaultAsync(todoList => todoList.Id == id);
+    }
+
     public async Task<TodoList> AddTodoListAsync(TodoList todoList)
     {
         _context.TodoList.Add(todoList);

@@ -8,6 +8,7 @@ public class TodoContext : DbContext
 
     public DbSet<TodoList> TodoList { get; set; } = default!;
     public DbSet<Item> Items { get; set; } = default!;
+    public DbSet<SyncEvent> SyncEvents { get; set; } = default!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -23,9 +24,18 @@ public class TodoContext : DbContext
 
             entity
                 .HasOne(item => item.TodoList)
-                .WithMany()
+                .WithMany(todoList => todoList.Items)
                 .HasForeignKey(item => item.TodoListId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SyncEvent>(entity =>
+        {
+            entity.ToTable("SyncEvents");
+            entity.Property(syncEvent => syncEvent.EntityType).HasMaxLength(64);
+            entity.Property(syncEvent => syncEvent.EventType).HasMaxLength(64);
+            entity.Property(syncEvent => syncEvent.Status).HasMaxLength(64);
+            entity.Property(syncEvent => syncEvent.CorrelationId).HasMaxLength(128);
         });
     }
 }

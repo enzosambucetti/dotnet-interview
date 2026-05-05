@@ -1,16 +1,22 @@
 using TodoApi.Dtos;
 using TodoApi.Models;
 using TodoApi.Repositories;
+using TodoApi.Sync;
 
 namespace TodoApi.Services;
 
 public class TodoListsService : ITodoListsService
 {
+    private readonly ISyncEventPublisher _syncEventPublisher;
     private readonly ITodoListsRepository _todoListsRepository;
 
-    public TodoListsService(ITodoListsRepository todoListsRepository)
+    public TodoListsService(
+        ITodoListsRepository todoListsRepository,
+        ISyncEventPublisher? syncEventPublisher = null
+    )
     {
         _todoListsRepository = todoListsRepository;
+        _syncEventPublisher = syncEventPublisher ?? new NoOpSyncEventPublisher();
     }
 
     public Task<IList<TodoList>> GetTodoListsAsync()
@@ -23,7 +29,30 @@ public class TodoListsService : ITodoListsService
         return _todoListsRepository.GetTodoListAsync(id);
     }
 
-    public Task<TodoList> CreateTodoListAsync(CreateTodoList payload)
+    public async Task<TodoListDetail?> GetTodoListDetailAsync(long id)
+    {
+        var todoList = await _todoListsRepository.GetTodoListWithItemsAsync(id);
+
+        if (todoList == null)
+        {
+            return null;
+        }
+
+        return new TodoListDetail
+        {
+            Id = todoList.Id,
+            SourceId = todoList.SourceId,
+            ExternalId = todoList.ExternalId,
+            Name = todoList.Name,
+            CreatedAt = todoList.CreatedAt,
+            UpdatedAt = todoList.UpdatedAt,
+            IsDeleted = todoList.IsDeleted,
+            DeletedAt = todoList.DeletedAt,
+            Items = todoList.Items.ToList(),
+        };
+    }
+
+    public async Task<TodoList> CreateTodoListAsync(CreateTodoList payload)
     {
         var createdAt = payload.CreatedAt ?? DateTimeOffset.UtcNow;
         var todoList = new TodoList
@@ -34,7 +63,16 @@ public class TodoListsService : ITodoListsService
             UpdatedAt = payload.UpdatedAt ?? createdAt,
         };
 
-        return _todoListsRepository.AddTodoListAsync(todoList);
+        var createdTodoList = await _todoListsRepository.AddTodoListAsync(todoList);
+
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.TodoList,
+            createdTodoList.Id,
+            SyncEventTypes.Created,
+            createdTodoList
+        );
+
+        return createdTodoList;
     }
 
     public async Task<TodoList?> UpdateTodoListAsync(long id, UpdateTodoList payload)
@@ -54,7 +92,16 @@ public class TodoListsService : ITodoListsService
         todoList.Name = payload.Name;
         todoList.UpdatedAt = payload.UpdatedAt ?? DateTimeOffset.UtcNow;
 
-        return await _todoListsRepository.UpdateTodoListAsync(todoList);
+        var updatedTodoList = await _todoListsRepository.UpdateTodoListAsync(todoList);
+
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.TodoList,
+            updatedTodoList.Id,
+            SyncEventTypes.Updated,
+            updatedTodoList
+        );
+
+        return updatedTodoList;
     }
 
     public async Task<bool> DeleteTodoListAsync(long id)
@@ -67,6 +114,13 @@ public class TodoListsService : ITodoListsService
         }
 
         await _todoListsRepository.SoftDeleteTodoListAsync(todoList, DateTimeOffset.UtcNow);
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.TodoList,
+            todoList.Id,
+            SyncEventTypes.Deleted,
+            todoList
+        );
+
         return true;
     }
 }

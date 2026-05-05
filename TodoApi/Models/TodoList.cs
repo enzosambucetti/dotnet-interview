@@ -9,6 +9,9 @@ public class TodoList
     [JsonPropertyName("source_id")]
     public string? SourceId { get; set; }
 
+    [JsonPropertyName("external_id")]
+    public string? ExternalId { get; set; }
+
     public required string Name { get; set; }
 
     [JsonPropertyName("created_at")]
@@ -22,4 +25,7 @@ public class TodoList
 
     [JsonPropertyName("deleted_at")]
     public DateTimeOffset? DeletedAt { get; set; }
+
+    [JsonIgnore]
+    public ICollection<Item> Items { get; set; } = new List<Item>();
 }
