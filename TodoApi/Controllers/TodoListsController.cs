@@ -31,9 +31,9 @@ namespace TodoApi.Controllers
 
         // GET: api/todolists/5
         [HttpGet("{id}")]
-        public async Task<ActionResult<TodoList>> GetTodoList(long id)
+        public async Task<ActionResult<TodoListDetail>> GetTodoList(long id)
         {
-            var todoList = await _todoListsService.GetTodoListAsync(id);
+            var todoList = await _todoListsService.GetTodoListDetailAsync(id);
 
             if (todoList == null)
             {

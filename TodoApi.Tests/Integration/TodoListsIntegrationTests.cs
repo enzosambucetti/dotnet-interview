@@ -70,6 +70,11 @@ public class TodoListsIntegrationTests
             return Task.FromResult(_todoLists.FirstOrDefault(x => x.Id == id && !x.IsDeleted));
         }
 
+        public Task<TodoList?> GetTodoListWithItemsAsync(long id)
+        {
+            return GetTodoListAsync(id);
+        }
+
         public Task<TodoList> AddTodoListAsync(TodoList todoList)
         {
             todoList.Id = _nextId++;

@@ -7,6 +7,7 @@ public interface ITodoListsService
 {
     Task<IList<TodoList>> GetTodoListsAsync();
     Task<TodoList?> GetTodoListAsync(long id);
+    Task<TodoListDetail?> GetTodoListDetailAsync(long id);
     Task<TodoList> CreateTodoListAsync(CreateTodoList payload);
     Task<TodoList?> UpdateTodoListAsync(long id, UpdateTodoList payload);
     Task<bool> DeleteTodoListAsync(long id);

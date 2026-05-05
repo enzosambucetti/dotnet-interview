@@ -16,6 +16,22 @@ public class TodoItemsController : ControllerBase
         _store = store;
     }
 
+    [HttpPost]
+    public ActionResult<TodoItem> CreateTodoItem(string todolistId, CreateTodoItemBody body)
+    {
+        var todoItem = _store.CreateTodoItem(todolistId, body);
+
+        if (todoItem == null)
+        {
+            return NotFound();
+        }
+
+        return Created(
+            $"/todolists/{todolistId}/todoitems/{todoItem.Id}",
+            todoItem
+        );
+    }
+
     [HttpPatch("{todoitemId}")]
     public ActionResult<TodoItem> UpdateTodoItem(
         string todolistId,

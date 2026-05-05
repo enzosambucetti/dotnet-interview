@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using TodoApi.Controllers;
+using TodoApi.Dtos;
 using TodoApi.Models;
 using TodoApi.Repositories;
 using TodoApi.Services;
@@ -22,6 +23,9 @@ public class TodoListsControllerTests
     {
         context.TodoList.Add(new TodoList { Id = 1, Name = "Task 1" });
         context.TodoList.Add(new TodoList { Id = 2, Name = "Task 2" });
+        context.Items.Add(new Item { Id = 1, Name = "Item 1", TodoListId = 1 });
+        context.Items.Add(new Item { Id = 2, Name = "Item 2", TodoListId = 1 });
+        context.Items.Add(new Item { Id = 3, Name = "Other list item", TodoListId = 2 });
         context.SaveChanges();
     }
 
@@ -61,7 +65,10 @@ public class TodoListsControllerTests
             var result = await controller.GetTodoList(1);
 
             Assert.IsType<OkObjectResult>(result.Result);
-            Assert.Equal(1, ((result.Result as OkObjectResult).Value as TodoList).Id);
+            var todoList = (result.Result as OkObjectResult).Value as TodoListDetail;
+            Assert.Equal(1, todoList.Id);
+            Assert.Equal(2, todoList.Items.Count);
+            Assert.All(todoList.Items, item => Assert.Equal(1, item.TodoListId));
         }
     }
 

@@ -37,6 +37,10 @@ namespace TodoApi.Migrations
                         .HasColumnType("datetimeoffset")
                         .HasAnnotation("Relational:JsonPropertyName", "deleted_at");
 
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("nvarchar(max)")
+                        .HasAnnotation("Relational:JsonPropertyName", "external_id");
+
                     b.Property<bool>("IsCompleted")
                         .HasColumnType("bit");
 
@@ -66,6 +70,58 @@ namespace TodoApi.Migrations
                     b.ToTable("Items", (string)null);
                 });
 
+            modelBuilder.Entity("TodoApi.Models.SyncEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("EntityId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SyncEvents", (string)null);
+                });
+
             modelBuilder.Entity("TodoApi.Models.TodoList", b =>
                 {
                     b.Property<long>("Id")
@@ -81,6 +137,10 @@ namespace TodoApi.Migrations
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("datetimeoffset")
                         .HasAnnotation("Relational:JsonPropertyName", "deleted_at");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("nvarchar(max)")
+                        .HasAnnotation("Relational:JsonPropertyName", "external_id");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit")

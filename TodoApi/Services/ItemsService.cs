@@ -1,16 +1,22 @@
 using TodoApi.Dtos;
 using TodoApi.Models;
 using TodoApi.Repositories;
+using TodoApi.Sync;
 
 namespace TodoApi.Services;
 
 public class ItemsService : IItemsService
 {
     private readonly IItemsRepository _itemsRepository;
+    private readonly ISyncEventPublisher _syncEventPublisher;
 
-    public ItemsService(IItemsRepository itemsRepository)
+    public ItemsService(
+        IItemsRepository itemsRepository,
+        ISyncEventPublisher? syncEventPublisher = null
+    )
     {
         _itemsRepository = itemsRepository;
+        _syncEventPublisher = syncEventPublisher ?? new NoOpSyncEventPublisher();
     }
 
     public async Task<IList<Item>?> GetItemsAsync(long todoListId)
@@ -46,7 +52,16 @@ public class ItemsService : IItemsService
             TodoListId = todoListId,
         };
 
-        return await _itemsRepository.AddItemAsync(item);
+        var createdItem = await _itemsRepository.AddItemAsync(item);
+
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.Item,
+            createdItem.Id,
+            SyncEventTypes.Created,
+            createdItem
+        );
+
+        return createdItem;
     }
 
     public async Task<Item?> UpdateItemAsync(long todoListId, long id, UpdateItem payload)
@@ -67,7 +82,16 @@ public class ItemsService : IItemsService
         item.IsCompleted = payload.IsCompleted;
         item.UpdatedAt = payload.UpdatedAt ?? DateTimeOffset.UtcNow;
 
-        return await _itemsRepository.UpdateItemAsync(item);
+        var updatedItem = await _itemsRepository.UpdateItemAsync(item);
+
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.Item,
+            updatedItem.Id,
+            SyncEventTypes.Updated,
+            updatedItem
+        );
+
+        return updatedItem;
     }
 
     public async Task<bool> DeleteItemAsync(long todoListId, long id)
@@ -80,6 +104,13 @@ public class ItemsService : IItemsService
         }
 
         await _itemsRepository.SoftDeleteItemAsync(item, DateTimeOffset.UtcNow);
+        await _syncEventPublisher.PublishAsync(
+            SyncEntityTypes.Item,
+            item.Id,
+            SyncEventTypes.Deleted,
+            item
+        );
+
         return true;
     }
 }

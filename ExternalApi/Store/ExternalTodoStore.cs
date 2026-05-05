@@ -94,6 +94,35 @@ public class ExternalTodoStore : IExternalTodoStore
         }
     }
 
+    public TodoItem? CreateTodoItem(string todoListId, CreateTodoItemBody body)
+    {
+        lock (_gate)
+        {
+            var todoList = _todoLists.FirstOrDefault(list => list.Id == todoListId);
+
+            if (todoList == null)
+            {
+                return null;
+            }
+
+            var timestamp = NextTimestamp();
+            var todoItem = new TodoItem
+            {
+                Id = NextItemId(),
+                SourceId = body.SourceId,
+                Description = body.Description ?? string.Empty,
+                Completed = body.Completed.GetValueOrDefault(),
+                CreatedAt = timestamp,
+                UpdatedAt = timestamp,
+            };
+
+            todoList.Items.Add(todoItem);
+            todoList.UpdatedAt = timestamp;
+
+            return CloneTodoItem(todoItem);
+        }
+    }
+
     public TodoItem? UpdateTodoItem(string todoListId, string todoItemId, UpdateTodoItemBody body)
     {
         lock (_gate)
