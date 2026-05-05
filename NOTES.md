@@ -26,6 +26,33 @@ Hangfire was chosen over a plain `BackgroundService` because this sync flow bene
 
 This is especially useful because inbound sync has no webhook/event source from `ExternalApi`, so the system polls every 1 minute.
 
+Hangfire is also a pragmatic choice for this challenge: it keeps the solution self-contained, easy to run locally, and demonstrable without provisioning cloud infrastructure.
+
+For a production cloud deployment, I would prefer an Azure-based architecture instead of running the synchronization workers inside the API process. A more production-oriented design would use:
+
+- Azure Service Bus topics or queues for outbound sync events.
+- Azure Functions or Durable Functions triggered asynchronously by Service Bus messages.
+- Durable Functions orchestrations for multi-step sync workflows that need retries, compensation, or reconciliation.
+- Timer-triggered Azure Functions for inbound polling when the external provider does not expose webhooks.
+- Azure SQL as the application database and durable state store for local entities and sync event audit.
+- Application Insights for distributed tracing, metrics, dashboards, and alerting.
+- Azure Key Vault for connection strings, external API settings, and secrets.
+- Managed Identity for Azure resource access.
+
+In that version, the local API would persist the domain change and publish an outbound sync message. A Service Bus-triggered function would process the message, call the external API, update sync metadata, and move unrecoverable messages to a dead-letter flow for investigation.
+
+Additional Azure production concerns that are intentionally out of scope for this challenge:
+
+- Service Bus dead-letter queue monitoring and replay tooling.
+- Idempotency keys or deduplication at the message and external API call level.
+- Poison message handling and max delivery count policies.
+- Durable orchestration state cleanup and retention policies.
+- Distributed locks or single-consumer guarantees for per-entity ordering.
+- Observability with correlation IDs across TodoApi, Service Bus, Functions, SQL, and ExternalApi.
+- Alerting on failed sync rates, dead-letter growth, retry exhaustion, and inbound polling failures.
+- Infrastructure-as-code for Azure resources, for example Bicep or Terraform.
+- CI/CD deployment separation for API, Functions, database migrations, and infrastructure.
+
 ## Outbound Sync
 
 Outbound is event-driven from local mutations:

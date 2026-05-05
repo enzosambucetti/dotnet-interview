@@ -80,7 +80,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
           }
         },
         {
@@ -97,7 +97,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Postman local list updated\"\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
           }
         },
         {
@@ -129,7 +129,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Postman local item\",\n  \"isCompleted\": false\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
           }
         },
         {
@@ -137,7 +137,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
           }
         },
         {
@@ -145,7 +145,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items/{{itemId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
           }
         },
         {
@@ -162,7 +162,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Postman local item updated\",\n  \"isCompleted\": true\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items/{{itemId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
           }
         },
         {
@@ -170,7 +170,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items/{{itemId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
           }
         },
         {
@@ -178,7 +178,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
           }
         }
       ]
@@ -251,7 +251,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Postman external list updated\"\n}"
             },
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
           }
         },
         {
@@ -283,7 +283,7 @@
               "mode": "raw",
               "raw": "{\n  \"source_id\": null,\n  \"description\": \"Postman external added item\",\n  \"completed\": false\n}"
             },
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}/todoitems"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems"
           }
         },
         {
@@ -300,7 +300,7 @@
               "mode": "raw",
               "raw": "{\n  \"description\": \"Postman external item updated\",\n  \"completed\": true\n}"
             },
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}/todoitems/{{externalItemId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems/:externalItemId"
           }
         },
         {
@@ -308,7 +308,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}/todoitems/{{externalItemId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId/todoitems/:externalItemId"
           }
         },
         {
@@ -316,7 +316,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
           }
         }
       ]
@@ -410,7 +410,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
           }
         },
         {
@@ -442,7 +442,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Milk\",\n  \"isCompleted\": false\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items"
           }
         },
         {
@@ -486,7 +486,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Local groceries updated\"\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId"
           }
         },
         {
@@ -525,7 +525,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"Milk updated\",\n  \"isCompleted\": true\n}"
             },
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items/{{itemId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
           }
         },
         {
@@ -625,7 +625,7 @@
               "mode": "raw",
               "raw": "{\n  \"name\": \"External work updated\"\n}"
             },
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
           }
         },
         {
@@ -656,7 +656,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{todoApiBaseUrl}}/api/todolists/{{todoListId}}/items/{{itemId}}"
+            "url": "{{todoApiBaseUrl}}/api/todolists/:todoListId/items/:itemId"
           }
         },
         {
@@ -688,7 +688,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": "{{externalApiBaseUrl}}/todolists/{{externalListId}}"
+            "url": "{{externalApiBaseUrl}}/todolists/:externalListId"
           }
         },
         {
