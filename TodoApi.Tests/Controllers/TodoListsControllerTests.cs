@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using TodoApi.Controllers;
 using TodoApi.Models;
+using TodoApi.Repositories;
+using TodoApi.Services;
 
 namespace TodoApi.Tests;
 
@@ -22,6 +25,14 @@ public class TodoListsControllerTests
         context.SaveChanges();
     }
 
+    private TodoListsController CreateController(TodoContext context)
+    {
+        var repository = new TodoListsRepository(context);
+        var service = new TodoListsService(repository);
+
+        return new TodoListsController(service, NullLogger<TodoListsController>.Instance);
+    }
+
     [Fact]
     public async Task GetTodoList_WhenCalled_ReturnsTodoListList()
     {
@@ -29,7 +40,7 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
             var result = await controller.GetTodoLists();
 
@@ -45,7 +56,7 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
             var result = await controller.GetTodoList(1);
 
@@ -61,14 +72,17 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
             var result = await controller.PutTodoList(
                 3,
                 new Dtos.UpdateTodoList { Name = "Task 3" }
             );
 
-            Assert.IsType<NotFoundResult>(result);
+            var objectResult = Assert.IsType<ObjectResult>(result);
+            var problemDetails = Assert.IsType<ProblemDetails>(objectResult.Value);
+            Assert.Equal(404, objectResult.StatusCode);
+            Assert.Equal("todo_list_not_found", problemDetails.Extensions["errorCode"]);
         }
     }
 
@@ -79,15 +93,23 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
             var todoList = await context.TodoList.Where(x => x.Id == 2).FirstAsync();
+            var updatedAt = DateTimeOffset.Parse("2026-01-03T00:00:00Z");
             var result = await controller.PutTodoList(
                 todoList.Id,
-                new Dtos.UpdateTodoList { Name = "Changed Task 2" }
+                new Dtos.UpdateTodoList
+                {
+                    SourceId = "ext-list-2",
+                    Name = "Changed Task 2",
+                    UpdatedAt = updatedAt,
+                }
             );
 
             Assert.IsType<OkObjectResult>(result);
+            Assert.Equal("ext-list-2", todoList.SourceId);
+            Assert.Equal(updatedAt, todoList.UpdatedAt);
         }
     }
 
@@ -98,12 +120,26 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
-            var result = await controller.PostTodoList(new Dtos.CreateTodoList { Name = "Task 3" });
+            var createdAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+            var updatedAt = DateTimeOffset.Parse("2026-01-02T00:00:00Z");
+            var result = await controller.PostTodoList(
+                new Dtos.CreateTodoList
+                {
+                    SourceId = "ext-list-3",
+                    Name = "Task 3",
+                    CreatedAt = createdAt,
+                    UpdatedAt = updatedAt,
+                }
+            );
 
             Assert.IsType<CreatedAtActionResult>(result.Result);
             Assert.Equal(3, context.TodoList.Count());
+            var createdTodoList = (result.Result as CreatedAtActionResult).Value as TodoList;
+            Assert.Equal("ext-list-3", createdTodoList.SourceId);
+            Assert.Equal(createdAt, createdTodoList.CreatedAt);
+            Assert.Equal(updatedAt, createdTodoList.UpdatedAt);
         }
     }
 
@@ -114,12 +150,13 @@ public class TodoListsControllerTests
         {
             PopulateDatabaseContext(context);
 
-            var controller = new TodoListsController(context);
+            var controller = CreateController(context);
 
             var result = await controller.DeleteTodoList(2);
 
             Assert.IsType<NoContentResult>(result);
             Assert.Equal(1, context.TodoList.Count());
+            Assert.Equal(2, context.TodoList.IgnoreQueryFilters().Count());
         }
     }
 }
