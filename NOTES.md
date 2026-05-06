@@ -182,7 +182,7 @@ Hangfire itself is treated as execution infrastructure. Its configuration and jo
 
 Manual validation through Postman remains useful for demonstrating the full local runtime with SQL Server, Hangfire dashboard, both APIs, and real HTTP calls.
 
-Postman collection exists in the root directory, all scenarios are covered.
+The Postman collection lives under `TodoApi/PostmanCollections` and covers the manual validation scenarios.
 
 ## Dev Container Support
 
