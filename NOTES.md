@@ -198,6 +198,16 @@ Codex CLI was used as the primary coding agent, selecting GPT models according t
 
 On the frontend, Vercel React/design skills were used to guide React implementation and UI decisions toward established best practices. The referenced skill source is `skills.sh`.
 
+## Future Improvements
+
+- **Transactional outbox**: replace the current `SyncEvent` + recovery enqueue mitigation with a stricter outbox dispatcher if exactly-once enqueue semantics become required.
+- **Cloud-native sync workers**: move sync execution out of the API process into Azure Service Bus-triggered Functions and Timer-triggered Functions for better scaling, isolation, and operations.
+- **Operational tooling**: add admin views or scripts for inspecting, replaying, canceling, or force-completing `SyncEvents`.
+- **Observability**: move from console-only logs to Application Insights/OpenTelemetry with dashboards and alerts for failed sync rates, retry exhaustion, inbound polling failures, and external API latency.
+- **Performance**: add pagination/filtering for large TodoLists and avoid full-list inbound comparisons if the external provider later supports incremental changes or updated-since queries.
+- **Security/configuration**: move secrets and environment-specific values out of checked-in config for production, using Key Vault/Managed Identity or equivalent secret management.
+- **More E2E coverage**: expand automated E2E tests for delete flows, conflict scenarios, recovery re-enqueue behavior, and SignalR notification publishing.
+
 ## Challenge Coverage Checklist
 
 - Local Todo API persists TodoLists and Items.
