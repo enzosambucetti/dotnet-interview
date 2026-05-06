@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using TodoApi.External;
 using TodoApi.Models;
+using TodoApi.Realtime;
 using TodoApi.Sync.Jobs;
 
 namespace TodoApi.Tests.Sync;
@@ -54,6 +55,47 @@ public class InboundSyncJobTests
     }
 
     [Fact]
+    public async Task ProcessAsync_WhenInboundChangesData_PublishesRealtimeEvents()
+    {
+        using var context = CreateContext();
+        var notifier = new FakeTodoRealtimeNotifier();
+        var externalClient = new FakeExternalTodoApiClient
+        {
+            TodoLists = new List<ExternalTodoList>
+            {
+                new()
+                {
+                    Id = "ext-list-1",
+                    SourceId = "external-seed",
+                    Name = "External Work",
+                    CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                    UpdatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                    Items = new List<ExternalTodoItem>
+                    {
+                        new()
+                        {
+                            Id = "ext-item-1",
+                            SourceId = "external-item-seed",
+                            Description = "Review sync",
+                            Completed = false,
+                            CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                            UpdatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                        },
+                    },
+                },
+            },
+        };
+        var job = CreateJob(context, externalClient, notifier);
+
+        await job.ProcessAsync(CancellationToken.None);
+
+        Assert.Contains(notifier.Events, x => x.EventType == TodoRealtimeEventTypes.TodoListCreated);
+        Assert.Contains(notifier.Events, x => x.EventType == TodoRealtimeEventTypes.ItemCreated);
+        Assert.Contains(notifier.Events, x => x.EventType == TodoRealtimeEventTypes.InboundSyncCompleted);
+        Assert.All(notifier.Events, x => Assert.Equal(TodoRealtimeSources.InboundSync, x.Source));
+    }
+
+    [Fact]
     public async Task ProcessAsync_WhenPreviouslySeenExternalDataDisappears_SoftDeletesLocalData()
     {
         using var context = CreateContext();
@@ -93,13 +135,15 @@ public class InboundSyncJobTests
 
     private static InboundSyncJob CreateJob(
         TodoContext context,
-        IExternalTodoApiClient externalTodoApiClient
+        IExternalTodoApiClient externalTodoApiClient,
+        ITodoRealtimeNotifier? todoRealtimeNotifier = null
     )
     {
         return new InboundSyncJob(
             context,
             externalTodoApiClient,
-            NullLogger<InboundSyncJob>.Instance
+            NullLogger<InboundSyncJob>.Instance,
+            todoRealtimeNotifier
         );
     }
 
@@ -169,6 +213,29 @@ public class InboundSyncJobTests
         )
         {
             throw new NotImplementedException();
+        }
+    }
+
+    private class FakeTodoRealtimeNotifier : ITodoRealtimeNotifier
+    {
+        public List<TodoRealtimeEvent> Events { get; } = new();
+
+        public Task PublishAsync(
+            TodoRealtimeEvent realtimeEvent,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.Add(realtimeEvent);
+            return Task.CompletedTask;
+        }
+
+        public Task PublishManyAsync(
+            IEnumerable<TodoRealtimeEvent> realtimeEvents,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.AddRange(realtimeEvents);
+            return Task.CompletedTask;
         }
     }
 }

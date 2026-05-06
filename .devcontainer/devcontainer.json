@@ -17,15 +17,16 @@
   "features": {},
 
   // Use 'forwardPorts' to make a list of ports inside the container available locally.
-  "forwardPorts": [],
+  "forwardPorts": [5083, 5090, 1433],
 
   // Use 'postCreateCommand' to run commands after the container is created.
-  "postCreateCommand": "dotnet restore && dotnet build",
+  "postCreateCommand": "dotnet tool restore || dotnet tool install --global dotnet-ef && export PATH=\"$PATH:$HOME/.dotnet/tools\" && dotnet restore && dotnet build && dotnet ef database update --project TodoApi --startup-project TodoApi",
 
   // Configure tool-specific properties.
   "customizations": {
     "vscode": {
       "extensions": [
+        "ms-dotnettools.csharp",
         "Postman.postman-for-vscode"
       ]
     }

@@ -57,6 +57,11 @@ Default launch URLs:
 
 Swagger is enabled in Development at `/swagger`.
 
+Hangfire dashboard is enabled in Development at:
+
+- `http://localhost:5083/hangfire`
+- `https://localhost:7027/hangfire`
+
 ### TodoApi With Local SQL Server Instance
 
 Use the `LocalSql` connection string when running against a local SQL Server or SQL Express instance.
@@ -77,6 +82,11 @@ dotnet run --project TodoApi --launch-profile TodoApi
 ```
 
 If the checked-in `LocalSql` connection string matches the machine, only `DatabaseTarget=LocalSql` is needed.
+
+After startup, Hangfire dashboard is available in Development at:
+
+- `http://localhost:5083/hangfire`
+- `https://localhost:7027/hangfire`
 
 ### Clearing Local TodoApi Database Data
 
@@ -149,6 +159,47 @@ Development-only reset endpoint:
 ```http
 POST /__test/reset
 ```
+
+### Running With Dev Containers
+
+The solution is fully functional using VS Code dev containers. The backend dev container includes the .NET SDK, SQL Server, and automatic migration setup.
+
+Prerequisites: Docker Desktop running.
+
+Steps:
+
+1. Open `dotnet-interview` in VS Code.
+2. Accept **"Reopen in Container"** or run `Dev Containers: Reopen in Container` from the command palette.
+3. Wait for `postCreateCommand` to finish (restore, build, migrations).
+4. Open two terminals inside the container.
+
+Terminal 1 - TodoApi:
+
+```bash
+dotnet run --project TodoApi --launch-profile TodoApi
+```
+
+Terminal 2 - ExternalApi:
+
+```bash
+dotnet run --project ExternalApi --launch-profile http
+```
+
+Forwarded ports accessible from the host browser:
+
+- TodoApi: `http://localhost:5083/swagger`
+- ExternalApi: `http://localhost:5090/swagger`
+- Hangfire: `http://localhost:5083/hangfire`
+- SQL Server: `localhost:1433`
+
+Inside the backend container, SQL Server is reached through the `sqlserver` hostname. This is configured by `ConnectionStrings__DockerSql` in `.devcontainer/docker-compose.yml`; `appsettings.json` remains useful for local development outside the container.
+
+Hangfire and SignalR work without extra configuration:
+
+- Hangfire uses the same SQL Server database and creates its tables on startup (`PrepareSchemaIfNecessary = true`). Recurring jobs register automatically.
+- SignalR hub `/hubs/todo-updates` is available on port 5083. CORS allows `http://localhost:5173` by default.
+
+To run the React frontend in its own dev container alongside this backend, see the frontend repository `AGENTS.md`. The frontend Vite proxy uses `VITE_API_TARGET=http://host.docker.internal:5083` inside its container to reach this backend through Docker host networking.
 
 ## Postman Collections
 
@@ -325,6 +376,7 @@ Todo list contracts:
 
 Todo items controller: `ExternalApi.Controllers.TodoItemsController`
 
+- `POST /todolists/{todolistId}/todoitems`
 - `PATCH /todolists/{todolistId}/todoitems/{todoitemId}`
 - `DELETE /todolists/{todolistId}/todoitems/{todoitemId}`
 
@@ -337,7 +389,7 @@ External API behavior:
 
 - `GET /todolists` returns lists with embedded items.
 - `POST /todolists` creates a list and optional items in one request.
-- There is no external endpoint to create a standalone item under an existing list.
+- `POST /todolists/{todolistId}/todoitems` is a local fake API extension for creating a standalone item under an existing list. It exists to exercise outbound item sync in the challenge implementation.
 - External IDs are deterministic strings like `ext-list-001` and `ext-item-001`.
 - Seed timestamps and runtime mutation timestamps are deterministic for repeatable sync tests.
 
@@ -458,21 +510,26 @@ Current behavior:
 
 Logging:
 
+- Current provider setup is console-only in `TodoApi/Program.cs` through `builder.Logging.ClearProviders()` and `builder.Logging.AddConsole()`.
+- Default log levels are configured in `TodoApi/appsettings.json` and `TodoApi/appsettings.Development.json`.
 - Use `ApiErrorEventIds` for stable log event IDs.
 - Log controlled HTTP errors at warning level.
 - Log unhandled HTTP exceptions at error level.
 - Include relevant route IDs and `traceId` in log messages.
+- `ExternalTodoApiClient` logs failed outbound HTTP attempts before retrying.
+- Sync jobs log reconciliation, obsolete events, dependency waits, conflicts, and retryable/terminal failures.
+- Keep production-oriented observability centralized outside the local challenge runtime, for example Application Insights/OpenTelemetry with dashboards and alerts.
 
 Do not return raw exception messages to HTTP clients.
 
 ### Background Sync Errors
 
-Background synchronization is not implemented yet. When it is added, do not use HTTP `ProblemDetails` for sync-job failures.
+Background synchronization failures should not use HTTP `ProblemDetails`; those are only for request/response API errors.
 
-Expected future approach:
+Current approach:
 
 - Log the exception with a stable sync event id.
-- Store the failure in sync state, for example `SyncEvent.LastError`.
+- Store the failure in sync state through `SyncEvent.LastError`.
 - Mark sync status as `FailedRetryable`, `FailedTerminal`, or `Pending` depending on retry policy.
 - Keep enough correlation data to connect logs, sync event rows, and affected entities.
 
@@ -534,6 +591,8 @@ TodoApi uses Hangfire for synchronization execution:
 
 - Outbound sync is event-driven. Local mutations create `SyncEvents` and enqueue outbound jobs.
 - Inbound sync is polling-based through a recurring Hangfire job every 1 minute because ExternalApi has no webhook/events.
+- Inbound sync disables Hangfire automatic retries. A failed inbound run should fail once and wait for the next 1-minute polling execution instead of accumulating scheduled retry jobs.
+- Inbound sync disables concurrent execution with a 300-second lock timeout so slow polls do not overlap with the next recurring run.
 - A recovery recurring job runs every 1 minute and re-enqueues retryable `Pending`, `FailedRetryable`, and legacy `Failed` sync events while attempts are below the max.
 - Outbound create/update `404` responses run inbound reconciliation immediately. If inbound confirms external deletion through local soft delete, the outbound event is completed instead of retried to the max attempt limit.
 - `FailedTerminal` events are not re-enqueued automatically.
@@ -561,3 +620,65 @@ POST /todolists/{todolistId}/todoitems
 ```
 
 This endpoint is not part of the original challenge contract; it exists to exercise outbound `ItemCreated`.
+
+Inbound sync is the recovery path when local application data is cleared but `ExternalApi` still has records:
+
+- If the local database schema still exists and only application rows are cleared, the next inbound polling run imports the current external lists/items again.
+- If the entire local database is dropped, run EF migrations first and then let inbound polling import from `ExternalApi`.
+- This only restores records that still exist in `ExternalApi`; the fake external API is in-memory and resets on process restart or `POST /__test/reset`.
+- After inbound imports or updates local data, TodoApi publishes SignalR events so connected frontends can refresh automatically.
+
+## Local SignalR Realtime
+
+`TodoApi` uses self-hosted ASP.NET Core SignalR for local realtime notifications. Do not add Azure SignalR resources.
+
+Hub endpoint:
+
+```http
+/hubs/todo-updates
+```
+
+Client event name:
+
+```text
+todoUpdated
+```
+
+Server implementation:
+
+- Hub: `TodoApi.Realtime.TodoUpdatesHub`
+- Publisher abstraction: `TodoApi.Realtime.ITodoRealtimeNotifier`
+- SignalR publisher: `TodoApi.Realtime.SignalRTodoRealtimeNotifier`
+- No-op test/default fallback: `TodoApi.Realtime.NoOpTodoRealtimeNotifier`
+
+Payload contract:
+
+- `eventType`: `TodoListCreated`, `TodoListUpdated`, `TodoListDeleted`, `ItemCreated`, `ItemUpdated`, `ItemDeleted`, `InboundSyncCompleted`
+- `entityType`: `TodoList`, `Item`, or `Sync`
+- `entityId`
+- `todoListId`
+- `source`: `LocalApi` or `InboundSync`
+- `occurredAt`
+- `payload`
+- `correlation_id`
+
+Publish realtime events when:
+
+- HTTP API requests create/update/delete TodoLists.
+- HTTP API requests create/update/delete Items.
+- Inbound sync imports/updates/soft-deletes TodoLists or Items.
+- Inbound sync finishes, using `InboundSyncCompleted`.
+
+CORS for browser clients is configured by:
+
+```json
+"Realtime": {
+  "AllowedOrigins": [
+    "http://localhost:3000",
+    "http://localhost:4200",
+    "http://localhost:5173"
+  ]
+}
+```
+
+Keep the hub self-hosted with `TodoApi`. If a future frontend runs on a different local port, add that origin to `Realtime:AllowedOrigins`.

@@ -13,6 +13,7 @@ using TodoApi.Sync.Jobs;
 
 namespace TodoApi.Tests.E2E;
 
+[Collection("SyncE2E")]
 public class SyncE2ETests
 {
     [Fact]
@@ -248,3 +249,6 @@ public class SyncE2ETests
         }
     }
 }
+
+[CollectionDefinition("SyncE2E", DisableParallelization = true)]
+public class SyncE2ECollection { }

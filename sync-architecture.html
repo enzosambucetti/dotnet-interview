@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TodoApi – Arquitectura de Sincronización</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent2: #a78bfa;
+            --accent3: #34d399;
+            --danger: #f87171;
+            --warning: #fbbf24;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        h1 {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        h2 {
+            font-size: 1.5rem;
+            color: var(--accent);
+            margin: 2.5rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        h3 {
+            font-size: 1.15rem;
+            color: var(--accent2);
+            margin: 1.5rem 0 0.75rem;
+        }
+        h4 {
+            font-size: 1rem;
+            color: var(--accent3);
+            margin: 1.2rem 0 0.5rem;
+        }
+        p, li { color: var(--text-muted); }
+        p { margin-bottom: 0.75rem; }
+        ul, ol { margin-left: 1.5rem; margin-bottom: 1rem; }
+        li { margin-bottom: 0.35rem; }
+        strong { color: var(--text); }
+        code {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.15rem 0.4rem;
+            font-size: 0.9em;
+            color: var(--accent);
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .card-accent {
+            border-left: 4px solid var(--accent);
+        }
+        .card-warn {
+            border-left: 4px solid var(--warning);
+        }
+        .card-danger {
+            border-left: 4px solid var(--danger);
+        }
+        .card-success {
+            border-left: 4px solid var(--accent3);
+        }
+        .diagram-container {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-outbound { background: #7c3aed33; color: var(--accent2); border: 1px solid var(--accent2); }
+        .badge-inbound { background: #0891b233; color: var(--accent); border: 1px solid var(--accent); }
+        .badge-recovery { background: #f59e0b33; color: var(--warning); border: 1px solid var(--warning); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            color: var(--accent);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        td { color: var(--text-muted); }
+        .status-flow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin: 1rem 0;
+        }
+        .status-node {
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid;
+        }
+        .status-pending { background: #3b82f620; color: #60a5fa; border-color: #3b82f6; }
+        .status-processing { background: #f59e0b20; color: #fbbf24; border-color: #f59e0b; }
+        .status-completed { background: #10b98120; color: #34d399; border-color: #10b981; }
+        .status-failed { background: #ef444420; color: #f87171; border-color: #ef4444; }
+        .status-terminal { background: #64748b20; color: #94a3b8; border-color: #64748b; }
+        .arrow { color: var(--text-muted); font-size: 1.2rem; }
+        .toc {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            margin: 1.5rem 0;
+        }
+        .toc a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .toc a:hover { text-decoration: underline; }
+        .subtitle { color: var(--text-muted); font-size: 1rem; margin-bottom: 2rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>Arquitectura de Sincronización – TodoApi</h1>
+<p class="subtitle">Documentación técnica del flujo bidireccional entre <strong>TodoApi</strong> (API Principal) y <strong>ExternalApi</strong> (API Externa) usando <strong>Hangfire</strong>.</p>
+
+<div class="toc">
+    <strong>Tabla de Contenidos</strong>
+    <ol>
+        <li><a href="#overview">Visión General de la Arquitectura</a></li>
+        <li><a href="#entities">Detalle de Entidades y Campos de Sincronización</a></li>
+        <li><a href="#outbound">Flujo Outbound (Local → Externa)</a></li>
+        <li><a href="#inbound">Flujo Inbound (Externa → Local) – Polling</a></li>
+        <li><a href="#recovery">Recovery Job – Recuperación de Eventos</a></li>
+        <li><a href="#hangfire">Hangfire: Enqueue vs RecurringJob</a></li>
+        <li><a href="#retries">Estrategia de Reintentos</a></li>
+        <li><a href="#idempotency">Idempotencia y Deduplicación</a></li>
+        <li><a href="#edge-cases">Casos de Borde</a></li>
+        <li><a href="#status-machine">Máquina de Estados de SyncEvent</a></li>
+    </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="overview">1. Visión General de la Arquitectura</h2>
+
+<div class="diagram-container">
+<pre class="mermaid">
+graph TB
+    subgraph "Usuario / Cliente"
+        U[Usuario]
+    end
+
+    subgraph "TodoApi – API Principal"
+        CTRL["Controllers<br/>(TodoListsController / ItemsController)"]
+        SVC["Services<br/>(TodoListsService / ItemsService)"]
+        PUB["SyncEventPublisher"]
+        DB[(SQL Server<br/>TodoList · Items · SyncEvents)]
+        HF["Hangfire Server"]
+
+        subgraph "Background Jobs"
+            OUT["OutboundSyncJob"]
+            INB["InboundSyncJob"]
+            REC["SyncEventRecoveryJob"]
+        end
+    end
+
+    subgraph "ExternalApi – API Externa"
+        EXT["ExternalApi<br/>(In-Memory Store)"]
+    end
+
+    U -->|"HTTP Request"| CTRL
+    CTRL --> SVC
+    SVC -->|"Persiste entidad"| DB
+    SVC -->|"Publica SyncEvent"| PUB
+    PUB -->|"INSERT SyncEvent"| DB
+    PUB -->|"BackgroundJob.Enqueue"| HF
+
+    HF -->|"Ejecuta"| OUT
+    HF -->|"Cron Minutely"| INB
+    HF -->|"Cron Minutely"| REC
+
+    OUT -->|"POST/PATCH/DELETE"| EXT
+    OUT -->|"Lee/Actualiza"| DB
+    INB -->|"GET /todolists"| EXT
+    INB -->|"Upsert/SoftDelete"| DB
+    REC -->|"Re-encola Pending/Failed"| HF
+
+    style U fill:#7c3aed,stroke:#7c3aed,color:#fff
+    style DB fill:#0f766e,stroke:#0f766e,color:#fff
+    style EXT fill:#b45309,stroke:#b45309,color:#fff
+    style HF fill:#4338ca,stroke:#4338ca,color:#fff
+</pre>
+</div>
+
+<div class="card card-accent">
+    <p><strong>Patrón arquitectónico:</strong> Event Sourcing ligero con <strong>Transactional Outbox</strong>. Cada mutación local genera un <code>SyncEvent</code> persistido en la misma transacción que la entidad, y luego se encola un job de Hangfire para procesarlo asincrónicamente. El flujo inbound usa <strong>Polling periódico</strong> con reconciliación completa.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="entities">2. Detalle de Entidades y Campos de Sincronización</h2>
+
+<h3>2.1 TodoList</h3>
+<table>
+    <thead><tr><th>Campo</th><th>Tipo</th><th>Propósito en Sincronización</th></tr></thead>
+    <tbody>
+        <tr><td><code>Id</code></td><td><code>long</code></td><td>Identidad local (PK auto-incrementada).</td></tr>
+        <tr><td><code>SourceId</code></td><td><code>string?</code></td><td><strong>Correlación cross-system.</strong> Se usa como campo de enlace bidireccional. El outbound envía <code>Id.ToString()</code> como <code>source_id</code>; el inbound lo usa para buscar la entidad local.</td></tr>
+        <tr><td><code>ExternalId</code></td><td><code>string?</code></td><td><strong>Identidad en la API externa.</strong> Se setea tras un POST exitoso. Si es <code>null</code>, la entidad aún no fue sincronizada outbound.</td></tr>
+        <tr><td><code>UpdatedAt</code></td><td><code>DateTimeOffset</code></td><td><strong>Last-Write-Wins.</strong> Se compara contra <code>external.UpdatedAt</code> para resolver conflictos inbound.</td></tr>
+        <tr><td><code>IsDeleted</code></td><td><code>bool</code></td><td>Soft-delete. Permite al inbound "borrar" listas que desaparecen de la API externa.</td></tr>
+        <tr><td><code>DeletedAt</code></td><td><code>DateTimeOffset?</code></td><td>Timestamp del soft-delete.</td></tr>
+    </tbody>
+</table>
+
+<h3>2.2 Item</h3>
+<table>
+    <thead><tr><th>Campo</th><th>Tipo</th><th>Propósito en Sincronización</th></tr></thead>
+    <tbody>
+        <tr><td><code>Id</code></td><td><code>long</code></td><td>Identidad local.</td></tr>
+        <tr><td><code>SourceId</code></td><td><code>string?</code></td><td>Correlación cross-system (mismo patrón que TodoList).</td></tr>
+        <tr><td><code>ExternalId</code></td><td><code>string?</code></td><td>Identidad en la API externa.</td></tr>
+        <tr><td><code>Name</code></td><td><code>string</code></td><td>Mapeado a <code>description</code> en la API externa.</td></tr>
+        <tr><td><code>IsCompleted</code></td><td><code>bool</code></td><td>Mapeado a <code>completed</code> en la API externa.</td></tr>
+        <tr><td><code>TodoListId</code></td><td><code>long</code></td><td>FK. El outbound necesita el <code>ExternalId</code> del padre para construir la ruta.</td></tr>
+        <tr><td><code>UpdatedAt</code></td><td><code>DateTimeOffset</code></td><td>Resolución de conflictos Last-Write-Wins.</td></tr>
+        <tr><td><code>IsDeleted / DeletedAt</code></td><td><code>bool / DateTimeOffset?</code></td><td>Soft-delete.</td></tr>
+    </tbody>
+</table>
+
+<h3>2.3 SyncEvent (Transactional Outbox)</h3>
+<table>
+    <thead><tr><th>Campo</th><th>Tipo</th><th>Propósito</th></tr></thead>
+    <tbody>
+        <tr><td><code>Id</code></td><td><code>long</code></td><td>PK. Se usa como parámetro del job de Hangfire.</td></tr>
+        <tr><td><code>EntityType</code></td><td><code>string</code></td><td><code>"TodoList"</code> o <code>"Item"</code>.</td></tr>
+        <tr><td><code>EntityId</code></td><td><code>long</code></td><td>FK lógica a la entidad afectada.</td></tr>
+        <tr><td><code>EventType</code></td><td><code>string</code></td><td><code>"Created"</code>, <code>"Updated"</code>, <code>"Deleted"</code>.</td></tr>
+        <tr><td><code>PayloadJson</code></td><td><code>string</code></td><td>Snapshot JSON de la entidad al momento de la mutación.</td></tr>
+        <tr><td><code>Status</code></td><td><code>string</code></td><td>Máquina de estados: <code>Pending → Processing → Completed/FailedRetryable/FailedTerminal</code>.</td></tr>
+        <tr><td><code>Attempts</code></td><td><code>int</code></td><td>Contador de intentos. Máximo: 5 (<code>SyncEventRecoveryJob.MaxAttempts</code>).</td></tr>
+        <tr><td><code>LastError</code></td><td><code>string?</code></td><td>Último mensaje de error para diagnóstico.</td></tr>
+        <tr><td><code>ProcessedAt</code></td><td><code>DateTimeOffset?</code></td><td>Timestamp de finalización exitosa.</td></tr>
+        <tr><td><code>CorrelationId</code></td><td><code>string</code></td><td>Tracing distribuido (<code>Activity.Current?.Id</code> o GUID).</td></tr>
+    </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="outbound">3. Flujo Outbound – Local → API Externa</h2>
+<p><span class="badge badge-outbound">Outbound</span> Se dispara <strong>sincrónicamente</strong> en cada mutación local (Create/Update/Delete). El Service persiste la entidad y el <code>SyncEvent</code> en la misma transacción, luego encola un job de Hangfire.</p>
+
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    actor U as Usuario
+    participant CTRL as Controller
+    participant SVC as Service
+    participant DB as SQL Server
+    participant PUB as SyncEventPublisher
+    participant HF as Hangfire
+    participant OUT as OutboundSyncJob
+    participant EXT as ExternalApi
+
+    U->>CTRL: POST /api/todolists {name: "Work"}
+    CTRL->>SVC: CreateTodoListAsync(payload)
+    SVC->>DB: INSERT TodoList
+    SVC->>PUB: PublishAsync("TodoList", id, "Created", entity)
+    PUB->>DB: INSERT SyncEvent (Status=Pending)
+    PUB->>HF: BackgroundJob.Enqueue&lt;IOutboundSyncJob&gt;(syncEventId)
+    SVC-->>CTRL: TodoList creado
+    CTRL-->>U: 201 Created
+
+    Note over HF,OUT: Hangfire ejecuta el job en background
+
+    HF->>OUT: ProcessAsync(syncEventId)
+    OUT->>DB: SELECT SyncEvent WHERE Id=syncEventId
+    OUT->>DB: Verificar si es obsoleto (entidad soft-deleted?)
+    OUT->>DB: UPDATE Status=Processing, Attempts++
+
+    alt EntityType=TodoList, EventType=Created
+        OUT->>DB: SELECT TodoList + Items
+        OUT->>EXT: POST /todolists {source_id, name, items[]}
+        EXT-->>OUT: 201 {id: "ext-list-003", items[{id: "ext-item-004"}]}
+        OUT->>DB: UPDATE TodoList.ExternalId = "ext-list-003"
+        OUT->>DB: UPDATE Items[].ExternalId = "ext-item-004"
+    else EntityType=TodoList, EventType=Updated
+        OUT->>DB: SELECT TodoList (verificar ExternalId != null)
+        OUT->>EXT: PATCH /todolists/{externalId} {name}
+    else EntityType=TodoList, EventType=Deleted
+        OUT->>DB: SELECT TodoList (verificar ExternalId != null)
+        OUT->>EXT: DELETE /todolists/{externalId}
+    end
+
+    OUT->>DB: UPDATE SyncEvent Status=Completed, ProcessedAt=UtcNow
+</pre>
+</div>
+
+<h3>3.1 Flujo Outbound para Items</h3>
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    actor U as Usuario
+    participant SVC as ItemsService
+    participant DB as SQL Server
+    participant HF as Hangfire
+    participant OUT as OutboundSyncJob
+    participant EXT as ExternalApi
+
+    U->>SVC: CreateItemAsync(todoListId, {name, isCompleted})
+    SVC->>DB: INSERT Item
+    SVC->>DB: INSERT SyncEvent (EntityType=Item, EventType=Created)
+    SVC->>HF: Enqueue OutboundSyncJob(syncEventId)
+
+    HF->>OUT: ProcessAsync(syncEventId)
+    OUT->>DB: SELECT Item WHERE Id=entityId
+    OUT->>DB: SELECT TodoList WHERE Id=item.TodoListId
+
+    alt TodoList.ExternalId == null
+        Note over OUT: SyncDependencyPendingException
+        OUT->>DB: UPDATE SyncEvent Status=Pending, Attempts--
+        Note over OUT: RecoveryJob lo reintentará cuando<br/>el TodoList tenga ExternalId
+    else TodoList.ExternalId != null
+        OUT->>EXT: POST /todolists/{externalListId}/todoitems<br/>{source_id, description, completed}
+        EXT-->>OUT: 201 {id: "ext-item-005"}
+        OUT->>DB: UPDATE Item.ExternalId = "ext-item-005"
+        OUT->>DB: UPDATE SyncEvent Status=Completed
+    end
+</pre>
+</div>
+
+<div class="card card-warn">
+    <h4>Dependencia de creación padre→hijo</h4>
+    <p>Un Item no puede sincronizarse outbound hasta que su TodoList padre tenga <code>ExternalId</code>. Si el create del padre aún está pendiente, el <code>OutboundSyncJob</code> lanza <code>SyncDependencyPendingException</code>, regresa el evento a <code>Pending</code>, y <strong>decrementa</strong> <code>Attempts</code> para no penalizar la espera legítima.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="inbound">4. Flujo Inbound – API Externa → Local (Polling)</h2>
+<p><span class="badge badge-inbound">Inbound</span> Ejecutado por un <code>RecurringJob</code> de Hangfire cada <strong>1 minuto</strong>. Realiza una reconciliación completa (full snapshot) contra la API externa.</p>
+
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    participant HF as Hangfire<br/>(Cron.Minutely)
+    participant INB as InboundSyncJob
+    participant EXT as ExternalApi
+    participant DB as SQL Server
+    participant RT as SignalR Hub
+
+    HF->>INB: ProcessAsync()
+    INB->>EXT: GET /todolists
+    EXT-->>INB: [{id, source_id, name, items[]}, ...]
+
+    Note over INB: Construir seenExternalListIds
+
+    loop Para cada externalList
+        INB->>DB: FindTodoListAsync(externalList)<br/>Buscar por ExternalId → SourceId → Id
+
+        alt No existe localmente
+            INB->>DB: INSERT TodoList {ExternalId, SourceId, Name, ...}
+        else Existe y no está soft-deleted
+            Note over INB: ApplyExternalListUpdate()
+            alt local.UpdatedAt > external.UpdatedAt
+                Note over INB: CONFLICTO: Local gana (Last-Write-Wins)
+            else external es más reciente
+                INB->>DB: UPDATE TodoList {Name, UpdatedAt}
+            end
+        end
+
+        Note over INB: UpsertItemsAsync() - mismo patrón para Items
+
+        loop Para cada externalItem en externalList.Items
+            INB->>DB: FindItemAsync(externalItem)<br/>Buscar por ExternalId → SourceId → Id
+
+            alt No existe localmente
+                INB->>DB: INSERT Item {ExternalId, SourceId, Name, ...}
+            else Existe y no está soft-deleted
+                alt local.UpdatedAt > external.UpdatedAt
+                    Note over INB: CONFLICTO: Local gana
+                else
+                    INB->>DB: UPDATE Item {Name, IsCompleted, UpdatedAt}
+                end
+            end
+        end
+
+        INB->>INB: SoftDeleteMissingExternalItemsAsync()
+    end
+
+    INB->>INB: SoftDeleteMissingExternalListsAsync()
+    INB->>DB: SaveChangesAsync()
+    INB->>RT: PublishManyAsync(realtimeEvents)
+</pre>
+</div>
+
+<h3>4.1 Estrategia de Búsqueda (Deduplicación Inbound)</h3>
+<div class="card card-success">
+    <p>La búsqueda de entidades locales usa una <strong>cascada de 3 criterios</strong> para evitar duplicados:</p>
+    <ol>
+        <li><strong>Por <code>ExternalId</code></strong> – Match directo con <code>external.Id</code>.</li>
+        <li><strong>Por <code>SourceId</code></strong> – Si no se encuentra por ExternalId y el external tiene <code>source_id</code>.</li>
+        <li><strong>Por <code>Id</code> local</strong> – Si <code>source_id</code> es un <code>long</code> parseable, se intenta como PK local.</li>
+    </ol>
+    <p>Se usa <code>IgnoreQueryFilters()</code> en todas las búsquedas para incluir entidades soft-deleted y evitar re-creaciones.</p>
+</div>
+
+<h3>4.2 Detección de Deletes Externos</h3>
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart TD
+    A["GET /todolists devuelve<br/>ext-list-001, ext-list-002"] --> B["Construir seenExternalListIds =<br/>{ext-list-001, ext-list-002}"]
+    B --> C["SELECT TodoList WHERE<br/>ExternalId IS NOT NULL<br/>AND IsDeleted = false<br/>AND ExternalId NOT IN seenIds"]
+    C --> D{"¿Hay listas faltantes?"}
+    D -->|Sí| E["Soft-delete:<br/>IsDeleted = true<br/>DeletedAt = UtcNow"]
+    E --> F["Soft-delete cascada:<br/>Items de la lista faltante"]
+    D -->|No| G["Sin cambios"]
+
+    style E fill:#dc2626,stroke:#dc2626,color:#fff
+    style F fill:#dc2626,stroke:#dc2626,color:#fff
+</pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="recovery">5. Recovery Job – Recuperación de Eventos Fallidos</h2>
+<p><span class="badge badge-recovery">Recovery</span> El <code>SyncEventRecoveryJob</code> también corre cada <strong>1 minuto</strong> via <code>RecurringJob</code>. Busca eventos estancados y los re-encola.</p>
+
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    participant HF as Hangfire (Cron.Minutely)
+    participant REC as SyncEventRecoveryJob
+    participant DB as SQL Server
+
+    HF->>REC: ProcessAsync()
+    REC->>DB: SELECT TOP 50 SyncEvents<br/>WHERE Status IN ('Pending','FailedRetryable','Failed')<br/>AND Attempts < 5<br/>ORDER BY CreatedAt ASC
+    DB-->>REC: [{id:1}, {id:5}, {id:12}]
+
+    loop Para cada SyncEvent recuperable
+        REC->>HF: BackgroundJob.Enqueue&lt;IOutboundSyncJob&gt;(syncEvent.Id)
+    end
+
+    Note over REC: Los jobs se ejecutarán según la<br/>capacidad del Hangfire Server
+</pre>
+</div>
+
+<div class="card card-accent">
+    <p><strong>Criterios de recuperación:</strong></p>
+    <ul>
+        <li><code>Status = Pending</code> – Eventos que nunca se procesaron o que quedaron en espera por dependencias.</li>
+        <li><code>Status = FailedRetryable</code> – Fallos transitorios (5xx, timeout, network).</li>
+        <li><code>Status = Failed</code> – Fallos genéricos que aún no agotaron intentos.</li>
+        <li><code>Attempts < 5</code> – Máximo 5 intentos totales.</li>
+    </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="hangfire">6. Hangfire: Enqueue vs RecurringJob</h2>
+
+<table>
+    <thead><tr><th>Mecanismo</th><th>Uso en el Sistema</th><th>Job</th><th>Cuándo se Dispara</th></tr></thead>
+    <tbody>
+        <tr>
+            <td><code>BackgroundJob.Enqueue</code><br/>(via <code>IBackgroundJobClient</code>)</td>
+            <td>Outbound sync</td>
+            <td><code>OutboundSyncJob</code></td>
+            <td>Inmediatamente tras cada mutación local (Create/Update/Delete). Disparado desde <code>SyncEventPublisher</code> y <code>SyncEventRecoveryJob</code>.</td>
+        </tr>
+        <tr>
+            <td><code>RecurringJob.AddOrUpdate</code></td>
+            <td>Inbound sync</td>
+            <td><code>InboundSyncJob</code></td>
+            <td><code>Cron.Minutely()</code> – Cada minuto. Id: <code>"todoapi-inbound-sync"</code>.</td>
+        </tr>
+        <tr>
+            <td><code>RecurringJob.AddOrUpdate</code></td>
+            <td>Recovery</td>
+            <td><code>SyncEventRecoveryJob</code></td>
+            <td><code>Cron.Minutely()</code> – Cada minuto. Id: <code>"todoapi-sync-event-recovery"</code>.</td>
+        </tr>
+    </tbody>
+</table>
+
+<div class="card card-accent">
+    <p><strong>Configuración condicional:</strong> El flag <code>Sync:HangfireEnabled</code> en configuración controla si se registra Hangfire. Cuando está deshabilitado, se inyecta <code>NoOpSyncJobScheduler</code> que descarta los enqueue silenciosamente.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="retries">7. Estrategia de Reintentos</h2>
+
+<h3>7.1 Reintentos a nivel de HTTP Client</h3>
+<div class="card card-accent">
+    <p><code>ExternalTodoApiClient.SendAsync</code> implementa un retry loop interno:</p>
+    <ul>
+        <li><strong>Máximo:</strong> <code>ExternalApiOptions.MaxRetries</code> (default: <strong>3</strong>).</li>
+        <li><strong>Backoff:</strong> Lineal – <code>200ms × attempt</code> (200ms, 400ms, 600ms).</li>
+        <li><strong>Excluye 404:</strong> Los <code>NotFound</code> <strong>no</strong> se reintentan a nivel HTTP (se propagan al job).</li>
+        <li><strong>Scope:</strong> Esto es por cada invocación individual del client, no del job.</li>
+    </ul>
+</div>
+
+<h3>7.2 Reintentos a nivel de Job (SyncEvent)</h3>
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart TD
+    A["OutboundSyncJob.ProcessAsync(syncEventId)"] --> B{"¿Éxito?"}
+    B -->|Sí| C["Status = Completed<br/>ProcessedAt = UtcNow"]
+    B -->|No| D{"¿Tipo de error?"}
+
+    D -->|"404 + EventType=Deleted"| C
+    D -->|"404 (no delete)"| E["Ejecutar InboundSyncJob<br/>(reconciliación)"]
+    E --> F{"¿Entidad borrada<br/>tras reconciliación?"}
+    F -->|Sí| C
+    F -->|No| G["Status = FailedRetryable"]
+
+    D -->|"SyncDependencyPending"| H["Status = Pending<br/>Attempts-- (no penalizar)"]
+    D -->|"SyncTerminalException"| I["Status = FailedTerminal<br/>(no reintentable)"]
+    D -->|"Timeout/5xx/Network"| J{"¿EventType = Created?"}
+    J -->|Sí| K["Intentar reconciliación inbound<br/>¿ExternalId asignado?"]
+    K -->|Sí| C
+    K -->|No| G
+    J -->|No| G
+
+    G --> L["SyncEventRecoveryJob<br/>(cada 1 min)"]
+    H --> L
+    L --> M{"Attempts < 5?"}
+    M -->|Sí| N["Re-enqueue<br/>OutboundSyncJob"]
+    M -->|No| O["Abandonado<br/>(queda en DB para análisis)"]
+
+    style C fill:#10b981,stroke:#10b981,color:#fff
+    style I fill:#64748b,stroke:#64748b,color:#fff
+    style G fill:#f59e0b,stroke:#f59e0b,color:#000
+    style H fill:#3b82f6,stroke:#3b82f6,color:#fff
+</pre>
+</div>
+
+<div class="card card-warn">
+    <h4>Errores clasificados como retryable</h4>
+    <ul>
+        <li><code>HttpStatusCode.RequestTimeout</code> (408)</li>
+        <li><code>HttpStatusCode.TooManyRequests</code> (429)</li>
+        <li>Cualquier status <code>>= 500</code> (Server errors)</li>
+        <li><code>TaskCanceledException</code>, <code>TimeoutException</code>, <code>HttpRequestException</code></li>
+    </ul>
+    <h4>Errores clasificados como terminales</h4>
+    <ul>
+        <li>Entidad local no encontrada en DB.</li>
+        <li>Entidad sin <code>ExternalId</code> y sin create pendiente.</li>
+        <li>Cualquier <code>SyncTerminalException</code> explícita.</li>
+    </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="idempotency">8. Idempotencia y Deduplicación</h2>
+
+<h3>8.1 Outbound – Idempotencia</h3>
+<div class="card card-success">
+    <ul>
+        <li><strong>Guard de status final:</strong> Si el <code>SyncEvent.Status</code> es <code>Completed</code> o <code>FailedTerminal</code>, el job retorna inmediatamente (<code>IsFinalStatus</code>).</li>
+        <li><strong>Guard de obsolescencia:</strong> Si la entidad fue soft-deleted entre la creación del evento y su procesamiento, <code>TryCompleteObsoleteEventAsync</code> marca el evento como <code>Completed</code> sin hacer la llamada HTTP.</li>
+        <li><strong>Guard de ExternalId ya existente:</strong> Para <code>Created</code>, si <code>ExternalId</code> ya tiene valor (otro job o inbound lo asignó), el create se omite.</li>
+        <li><strong>Reconciliación post-error:</strong> Si un create falla ambiguamente (timeout, 5xx, conflict), se ejecuta un inbound sync para verificar si el recurso se creó. Si <code>ExternalId</code> quedó asignado, se marca como <code>Completed</code>.</li>
+    </ul>
+</div>
+
+<h3>8.2 Inbound – Deduplicación por Cascada de Búsqueda</h3>
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart LR
+    A["ExternalList llega<br/>id=ext-list-001<br/>source_id=local-list-1"] --> B{"Buscar por<br/>ExternalId?"}
+    B -->|Encontrado| G["UPSERT existente"]
+    B -->|No encontrado| C{"Buscar por<br/>SourceId?"}
+    C -->|Encontrado| G
+    C -->|No encontrado| D{"source_id parseable<br/>como long?"}
+    D -->|Sí| E{"Buscar por<br/>Id local?"}
+    E -->|Encontrado| G
+    E -->|No encontrado| F["INSERT nueva entidad"]
+    D -->|No| F
+
+    style G fill:#10b981,stroke:#10b981,color:#fff
+    style F fill:#3b82f6,stroke:#3b82f6,color:#fff
+</pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="edge-cases">9. Casos de Borde</h2>
+
+<h3>9.1 Job falla a mitad del proceso</h3>
+<div class="card card-danger">
+    <h4>Escenario: El POST a ExternalApi fue exitoso pero el UPDATE local falla</h4>
+    <p>Si <code>ProcessTodoListCreatedAsync</code> logra crear el recurso externo pero falla al guardar el <code>ExternalId</code> localmente:</p>
+    <ol>
+        <li>El <code>SyncEvent</code> queda en <code>FailedRetryable</code>.</li>
+        <li>El <code>SyncEventRecoveryJob</code> lo re-encola.</li>
+        <li>En el siguiente intento, el create outbound verifica <code>ExternalId</code>. Como es <code>null</code>, intenta crear de nuevo.</li>
+        <li>Si la API externa rechaza con 409 Conflict o 5xx, se activa <code>TryCompleteCreateAfterReconciliationAsync</code>.</li>
+        <li>Se ejecuta un <strong>InboundSync</strong> que trae el snapshot externo y asigna el <code>ExternalId</code> correctamente.</li>
+        <li>El evento se marca como <code>Completed</code>.</li>
+    </ol>
+</div>
+
+<h3>9.2 Conflicto de versiones entre APIs</h3>
+<div class="card card-warn">
+    <h4>Estrategia: Last-Write-Wins basado en <code>UpdatedAt</code></h4>
+    <p>Durante el inbound sync, si una entidad existe localmente y la versión externa tiene cambios:</p>
+    <ul>
+        <li>Si <code>local.UpdatedAt > external.UpdatedAt</code> → <strong>Local gana</strong>. Se logea un warning pero no se aplica el cambio externo.</li>
+        <li>Si <code>local.UpdatedAt <= external.UpdatedAt</code> → <strong>Externo gana</strong>. Se actualiza la entidad local.</li>
+    </ul>
+    <p>El outbound no tiene resolución de conflictos explícita: siempre envía el estado local actual. Si la API externa rechaza (4xx), se clasifica el error según su tipo.</p>
+</div>
+
+<h3>9.3 Entidad eliminada externamente (404 en outbound)</h3>
+<div class="card card-accent">
+    <p>Si un outbound update/create recibe <strong>404 Not Found</strong>:</p>
+    <ol>
+        <li>Se ejecuta un <strong>InboundSync completo</strong> como reconciliación.</li>
+        <li>Si tras la reconciliación la entidad local quedó soft-deleted → <code>Completed</code>.</li>
+        <li>Si no se resolvió → <code>FailedRetryable</code>.</li>
+    </ol>
+    <p><strong>Excepción:</strong> Si el evento es un <code>Delete</code> y recibe 404, se marca <code>Completed</code> directamente (el recurso ya no existe, que es el resultado deseado).</p>
+</div>
+
+<h3>9.4 Race condition: Outbound y Inbound simultáneos</h3>
+<div class="card card-warn">
+    <p>Dado que el <code>OutboundSyncJob</code> puede disparar un <code>InboundSyncJob</code> inline (reconciliación), y el <code>InboundSyncJob</code> corre como <code>RecurringJob</code>, existe la posibilidad de ejecución concurrente. Mitigaciones:</p>
+    <ul>
+        <li>Ambos operan sobre el mismo <code>TodoContext</code> scoped. El EF Change Tracker detecta conflictos de concurrencia.</li>
+        <li>El inbound es idempotente: upsert basado en la cascada de búsqueda. Procesar dos veces el mismo snapshot externo no genera duplicados.</li>
+        <li>El outbound verifica <code>ExternalId</code> antes de crear: si el inbound ya lo asignó, el create se omite.</li>
+    </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="status-machine">10. Máquina de Estados de SyncEvent</h2>
+
+<div class="status-flow">
+    <span class="status-node status-pending">Pending</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-processing">Processing</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-completed">Completed</span>
+</div>
+<div class="status-flow">
+    <span class="status-node status-processing">Processing</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-failed">FailedRetryable</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-pending">Re-enqueue</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-processing">Processing</span>
+</div>
+<div class="status-flow">
+    <span class="status-node status-processing">Processing</span>
+    <span class="arrow">→</span>
+    <span class="status-node status-terminal">FailedTerminal</span>
+    <span class="arrow">(fin)</span>
+</div>
+
+<div class="diagram-container">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> Pending : SyncEventPublisher crea el evento
+    Pending --> Processing : OutboundSyncJob toma el evento
+    Processing --> Completed : Éxito o evento obsoleto
+    Processing --> FailedRetryable : Error transitorio (5xx, timeout)
+    Processing --> FailedTerminal : Error permanente (entidad no existe)
+    Processing --> Pending : SyncDependencyPending (espera padre)
+    FailedRetryable --> Processing : RecoveryJob re-encola (Attempts < 5)
+    Pending --> Processing : RecoveryJob re-encola
+    Failed --> Processing : RecoveryJob re-encola (Attempts < 5)
+
+    Completed --> [*]
+    FailedTerminal --> [*]
+</pre>
+</div>
+
+<div class="card card-accent">
+    <h4>Resumen de garantías del sistema</h4>
+    <table>
+        <thead><tr><th>Propiedad</th><th>Mecanismo</th></tr></thead>
+        <tbody>
+            <tr><td><strong>At-least-once delivery</strong></td><td>Transactional outbox + RecoveryJob con re-enqueue</td></tr>
+            <tr><td><strong>Idempotencia outbound</strong></td><td>Guards de ExternalId, soft-delete, status final + reconciliación inbound</td></tr>
+            <tr><td><strong>Deduplicación inbound</strong></td><td>Cascada ExternalId → SourceId → Id con <code>IgnoreQueryFilters</code></td></tr>
+            <tr><td><strong>Resolución de conflictos</strong></td><td>Last-Write-Wins basado en <code>UpdatedAt</code></td></tr>
+            <tr><td><strong>Resiliencia</strong></td><td>Retry HTTP (3 intentos) + retry job (5 intentos) + reconciliación automática</td></tr>
+            <tr><td><strong>Detección de deletes</strong></td><td>Full snapshot comparison: entidades ausentes en el GET se soft-deletean</td></tr>
+            <tr><td><strong>Dependencias de orden</strong></td><td><code>SyncDependencyPendingException</code> para items cuyo padre no tiene ExternalId</td></tr>
+        </tbody>
+    </table>
+</div>
+
+</div>
+
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        sequence: {
+            mirrorActors: false,
+            actorMargin: 50,
+            messageMargin: 40,
+            noteMargin: 15,
+            width: 200
+        },
+        flowchart: {
+            curve: 'basis',
+            padding: 20
+        }
+    });
+</script>
+</body>
+</html>
