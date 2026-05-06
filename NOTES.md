@@ -182,7 +182,7 @@ Hangfire itself is treated as execution infrastructure. Its configuration and jo
 
 Manual validation through Postman remains useful for demonstrating the full local runtime with SQL Server, Hangfire dashboard, both APIs, and real HTTP calls.
 
-Postman collection exists in the root directory, all scenarios are covered.
+The Postman collection lives under `TodoApi/PostmanCollections` and covers the manual validation scenarios.
 
 ## Dev Container Support
 
@@ -197,6 +197,16 @@ Relevant AI conversations were saved in the root `AIConversations` folder to kee
 Codex CLI was used as the primary coding agent, selecting GPT models according to the workload and task complexity. Windsurf was also used as an agentic AI IDE to vary model behavior when useful, including Claude Opus for workloads that benefited from a different model profile.
 
 On the frontend, Vercel React/design skills were used to guide React implementation and UI decisions toward established best practices. The referenced skill source is `skills.sh`.
+
+## Future Improvements
+
+- **Transactional outbox**: replace the current `SyncEvent` + recovery enqueue mitigation with a stricter outbox dispatcher if exactly-once enqueue semantics become required.
+- **Cloud-native sync workers**: move sync execution out of the API process into Azure Service Bus-triggered Functions and Timer-triggered Functions for better scaling, isolation, and operations.
+- **Operational tooling**: add admin views or scripts for inspecting, replaying, canceling, or force-completing `SyncEvents`.
+- **Observability**: move from console-only logs to Application Insights/OpenTelemetry with dashboards and alerts for failed sync rates, retry exhaustion, inbound polling failures, and external API latency.
+- **Performance**: add pagination/filtering for large TodoLists and avoid full-list inbound comparisons if the external provider later supports incremental changes or updated-since queries.
+- **Security/configuration**: move secrets and environment-specific values out of checked-in config for production, using Key Vault/Managed Identity or equivalent secret management.
+- **More E2E coverage**: expand automated E2E tests for delete flows, conflict scenarios, recovery re-enqueue behavior, and SignalR notification publishing.
 
 ## Challenge Coverage Checklist
 
