@@ -1,28 +1,33 @@
 using Microsoft.EntityFrameworkCore;
 using TodoApi.External;
 using TodoApi.Models;
+using TodoApi.Realtime;
 
 namespace TodoApi.Sync.Jobs;
 
 public class InboundSyncJob : IInboundSyncJob
 {
     private readonly IExternalTodoApiClient _externalTodoApiClient;
+    private readonly ITodoRealtimeNotifier _todoRealtimeNotifier;
     private readonly ILogger<InboundSyncJob> _logger;
     private readonly TodoContext _context;
 
     public InboundSyncJob(
         TodoContext context,
         IExternalTodoApiClient externalTodoApiClient,
-        ILogger<InboundSyncJob> logger
+        ILogger<InboundSyncJob> logger,
+        ITodoRealtimeNotifier? todoRealtimeNotifier = null
     )
     {
         _context = context;
         _externalTodoApiClient = externalTodoApiClient;
         _logger = logger;
+        _todoRealtimeNotifier = todoRealtimeNotifier ?? new NoOpTodoRealtimeNotifier();
     }
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
+        var realtimeEvents = new List<TodoRealtimeEvent>();
         var externalLists = await _externalTodoApiClient.ListTodoListsAsync(cancellationToken);
         var seenExternalListIds = externalLists
             .Where(x => !string.IsNullOrWhiteSpace(x.Id))
@@ -36,15 +41,27 @@ public class InboundSyncJob : IInboundSyncJob
                 continue;
             }
 
-            await UpsertTodoListAsync(externalList, cancellationToken);
+            await UpsertTodoListAsync(externalList, realtimeEvents, cancellationToken);
         }
 
-        await SoftDeleteMissingExternalListsAsync(seenExternalListIds, cancellationToken);
+        await SoftDeleteMissingExternalListsAsync(seenExternalListIds, realtimeEvents, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
+
+        realtimeEvents.Add(
+            new TodoRealtimeEvent
+            {
+                EventType = TodoRealtimeEventTypes.InboundSyncCompleted,
+                EntityType = "Sync",
+                Source = TodoRealtimeSources.InboundSync,
+                Payload = new { changed = realtimeEvents.Count },
+            }
+        );
+        await _todoRealtimeNotifier.PublishManyAsync(realtimeEvents, cancellationToken);
     }
 
     private async Task UpsertTodoListAsync(
         ExternalTodoList externalList,
+        IList<TodoRealtimeEvent> realtimeEvents,
         CancellationToken cancellationToken
     )
     {
@@ -62,6 +79,7 @@ public class InboundSyncJob : IInboundSyncJob
             };
 
             _context.TodoList.Add(todoList);
+            realtimeEvents.Add(CreateTodoListEvent(TodoRealtimeEventTypes.TodoListCreated, todoList));
         }
         else
         {
@@ -70,21 +88,24 @@ public class InboundSyncJob : IInboundSyncJob
 
             if (!todoList.IsDeleted)
             {
-                ApplyExternalListUpdate(todoList, externalList);
+                if (ApplyExternalListUpdate(todoList, externalList))
+                {
+                    realtimeEvents.Add(CreateTodoListEvent(TodoRealtimeEventTypes.TodoListUpdated, todoList));
+                }
             }
         }
 
         await _context.SaveChangesAsync(cancellationToken);
-        await UpsertItemsAsync(todoList, externalList, cancellationToken);
+        await UpsertItemsAsync(todoList, externalList, realtimeEvents, cancellationToken);
     }
 
-    private void ApplyExternalListUpdate(TodoList todoList, ExternalTodoList externalList)
+    private bool ApplyExternalListUpdate(TodoList todoList, ExternalTodoList externalList)
     {
         var changed = todoList.Name != (externalList.Name ?? string.Empty);
 
         if (!changed)
         {
-            return;
+            return false;
         }
 
         if (todoList.UpdatedAt > externalList.UpdatedAt)
@@ -94,17 +115,19 @@ public class InboundSyncJob : IInboundSyncJob
                 todoList.Id,
                 todoList.ExternalId
             );
-            return;
+            return false;
         }
 
         todoList.SourceId = externalList.SourceId;
         todoList.Name = externalList.Name ?? string.Empty;
         todoList.UpdatedAt = externalList.UpdatedAt;
+        return true;
     }
 
     private async Task UpsertItemsAsync(
         TodoList todoList,
         ExternalTodoList externalList,
+        IList<TodoRealtimeEvent> realtimeEvents,
         CancellationToken cancellationToken
     )
     {
@@ -124,18 +147,18 @@ public class InboundSyncJob : IInboundSyncJob
 
             if (item == null)
             {
-                _context.Items.Add(
-                    new Item
-                    {
-                        ExternalId = externalItem.Id,
-                        SourceId = externalItem.SourceId,
-                        Name = externalItem.Description ?? string.Empty,
-                        IsCompleted = externalItem.Completed,
-                        CreatedAt = externalItem.CreatedAt,
-                        UpdatedAt = externalItem.UpdatedAt,
-                        TodoListId = todoList.Id,
-                    }
-                );
+                var newItem = new Item
+                {
+                    ExternalId = externalItem.Id,
+                    SourceId = externalItem.SourceId,
+                    Name = externalItem.Description ?? string.Empty,
+                    IsCompleted = externalItem.Completed,
+                    CreatedAt = externalItem.CreatedAt,
+                    UpdatedAt = externalItem.UpdatedAt,
+                    TodoListId = todoList.Id,
+                };
+                _context.Items.Add(newItem);
+                realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemCreated, newItem));
             }
             else
             {
@@ -144,15 +167,23 @@ public class InboundSyncJob : IInboundSyncJob
 
                 if (!item.IsDeleted)
                 {
-                    ApplyExternalItemUpdate(item, externalItem);
+                    if (ApplyExternalItemUpdate(item, externalItem))
+                    {
+                        realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemUpdated, item));
+                    }
                 }
             }
         }
 
-        await SoftDeleteMissingExternalItemsAsync(todoList, seenExternalItemIds, cancellationToken);
+        await SoftDeleteMissingExternalItemsAsync(
+            todoList,
+            seenExternalItemIds,
+            realtimeEvents,
+            cancellationToken
+        );
     }
 
-    private void ApplyExternalItemUpdate(Item item, ExternalTodoItem externalItem)
+    private bool ApplyExternalItemUpdate(Item item, ExternalTodoItem externalItem)
     {
         var changed =
             item.Name != (externalItem.Description ?? string.Empty)
@@ -160,7 +191,7 @@ public class InboundSyncJob : IInboundSyncJob
 
         if (!changed)
         {
-            return;
+            return false;
         }
 
         if (item.UpdatedAt > externalItem.UpdatedAt)
@@ -170,17 +201,19 @@ public class InboundSyncJob : IInboundSyncJob
                 item.Id,
                 item.ExternalId
             );
-            return;
+            return false;
         }
 
         item.SourceId = externalItem.SourceId;
         item.Name = externalItem.Description ?? string.Empty;
         item.IsCompleted = externalItem.Completed;
         item.UpdatedAt = externalItem.UpdatedAt;
+        return true;
     }
 
     private async Task SoftDeleteMissingExternalListsAsync(
         HashSet<string> seenExternalListIds,
+        IList<TodoRealtimeEvent> realtimeEvents,
         CancellationToken cancellationToken
     )
     {
@@ -195,6 +228,7 @@ public class InboundSyncJob : IInboundSyncJob
             todoList.IsDeleted = true;
             todoList.DeletedAt = deletedAt;
             todoList.UpdatedAt = deletedAt;
+            realtimeEvents.Add(CreateTodoListEvent(TodoRealtimeEventTypes.TodoListDeleted, todoList));
 
             var items = await _context.Items
                 .Where(x => x.TodoListId == todoList.Id)
@@ -205,6 +239,7 @@ public class InboundSyncJob : IInboundSyncJob
                 item.IsDeleted = true;
                 item.DeletedAt = deletedAt;
                 item.UpdatedAt = deletedAt;
+                realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemDeleted, item));
             }
         }
     }
@@ -212,6 +247,7 @@ public class InboundSyncJob : IInboundSyncJob
     private async Task SoftDeleteMissingExternalItemsAsync(
         TodoList todoList,
         HashSet<string> seenExternalItemIds,
+        IList<TodoRealtimeEvent> realtimeEvents,
         CancellationToken cancellationToken
     )
     {
@@ -232,7 +268,34 @@ public class InboundSyncJob : IInboundSyncJob
             item.IsDeleted = true;
             item.DeletedAt = deletedAt;
             item.UpdatedAt = deletedAt;
+            realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemDeleted, item));
         }
+    }
+
+    private static TodoRealtimeEvent CreateTodoListEvent(string eventType, TodoList todoList)
+    {
+        return new TodoRealtimeEvent
+        {
+            EventType = eventType,
+            EntityType = SyncEntityTypes.TodoList,
+            EntityId = todoList.Id,
+            TodoListId = todoList.Id,
+            Source = TodoRealtimeSources.InboundSync,
+            Payload = todoList,
+        };
+    }
+
+    private static TodoRealtimeEvent CreateItemEvent(string eventType, Item item)
+    {
+        return new TodoRealtimeEvent
+        {
+            EventType = eventType,
+            EntityType = SyncEntityTypes.Item,
+            EntityId = item.Id,
+            TodoListId = item.TodoListId,
+            Source = TodoRealtimeSources.InboundSync,
+            Payload = item,
+        };
     }
 
     private async Task<TodoList?> FindTodoListAsync(

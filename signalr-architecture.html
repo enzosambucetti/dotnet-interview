@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TodoApi – Flujo SignalR Realtime</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent2: #a78bfa;
+            --accent3: #34d399;
+            --danger: #f87171;
+            --warning: #fbbf24;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        h1 {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        h2 {
+            font-size: 1.5rem;
+            color: var(--accent);
+            margin: 2.5rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        h3 {
+            font-size: 1.15rem;
+            color: var(--accent2);
+            margin: 1.5rem 0 0.75rem;
+        }
+        p, li { color: var(--text-muted); }
+        p { margin-bottom: 0.75rem; }
+        ul, ol { margin-left: 1.5rem; margin-bottom: 1rem; }
+        li { margin-bottom: 0.35rem; }
+        strong { color: var(--text); }
+        code {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.15rem 0.4rem;
+            font-size: 0.9em;
+            color: var(--accent);
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .card-accent { border-left: 4px solid var(--accent); }
+        .card-purple { border-left: 4px solid var(--accent2); }
+        .card-green { border-left: 4px solid var(--accent3); }
+        .diagram-container {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            color: var(--accent);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        td { color: var(--text-muted); }
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-local { background: #7c3aed33; color: var(--accent2); border: 1px solid var(--accent2); }
+        .badge-inbound { background: #0891b233; color: var(--accent); border: 1px solid var(--accent); }
+        .subtitle { color: var(--text-muted); font-size: 1rem; margin-bottom: 2rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>Flujo SignalR Realtime – TodoApi</h1>
+<p class="subtitle">Cómo <strong>TodoApi</strong> notifica cambios en tiempo real a los clientes conectados via <strong>SignalR</strong>, tanto desde mutaciones locales como desde el inbound sync.</p>
+
+<!-- ============================================================ -->
+<h2>1. Arquitectura General SignalR</h2>
+
+<div class="diagram-container">
+<pre class="mermaid">
+graph TB
+    subgraph "Origenes de Eventos"
+        SVC["Services<br/>(TodoListsService / ItemsService)"]
+        INB["InboundSyncJob<br/>(Hangfire)"]
+    end
+
+    subgraph "Capa de Notificación"
+        ITN["ITodoRealtimeNotifier"]
+        SRN["SignalRTodoRealtimeNotifier"]
+        NOOP["NoOpTodoRealtimeNotifier"]
+    end
+
+    subgraph "SignalR Infrastructure"
+        HC["IHubContext&lt;TodoUpdatesHub&gt;"]
+        HUB["TodoUpdatesHub<br/>/hubs/todo-updates"]
+    end
+
+    subgraph "Clientes Conectados"
+        C1["Cliente Web 1"]
+        C2["Cliente Web 2"]
+        C3["Cliente Web N"]
+    end
+
+    SVC -->|"PublishAsync(event)"| ITN
+    INB -->|"PublishManyAsync(events)"| ITN
+    ITN -.->|"Producción"| SRN
+    ITN -.->|"Tests"| NOOP
+    SRN -->|"SendAsync('todoUpdated', event)"| HC
+    HC --> HUB
+    HUB -->|"WebSocket"| C1
+    HUB -->|"WebSocket"| C2
+    HUB -->|"WebSocket"| C3
+
+    style SVC fill:#7c3aed,stroke:#7c3aed,color:#fff
+    style INB fill:#4338ca,stroke:#4338ca,color:#fff
+    style HUB fill:#0f766e,stroke:#0f766e,color:#fff
+    style C1 fill:#b45309,stroke:#b45309,color:#fff
+    style C2 fill:#b45309,stroke:#b45309,color:#fff
+    style C3 fill:#b45309,stroke:#b45309,color:#fff
+</pre>
+</div>
+
+<div class="card card-accent">
+    <p><strong>Hub:</strong> <code>TodoUpdatesHub</code> es un Hub vacío (sin métodos server-side). Solo se usa como canal de broadcast vía <code>IHubContext</code>. El endpoint es <code>/hubs/todo-updates</code>.</p>
+    <p><strong>Evento único:</strong> Todos los mensajes se envían al client method <code>"todoUpdated"</code> con un payload tipado <code>TodoRealtimeEvent</code>.</p>
+    <p><strong>Broadcast:</strong> Se envía a <code>Clients.All</code> — todos los clientes conectados reciben todos los eventos.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Flujo desde Mutación Local (API REST)</h2>
+<p><span class="badge badge-local">Source: LocalApi</span> Cada Create / Update / Delete en los Services emite un evento SignalR inmediatamente después de persistir.</p>
+
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    actor U as Usuario
+    participant CTRL as Controller
+    participant SVC as Service
+    participant DB as SQL Server
+    participant NTF as SignalRTodoRealtimeNotifier
+    participant HUB as TodoUpdatesHub
+    participant C as Clientes WebSocket
+
+    U->>CTRL: POST /api/todolists {name: "Work"}
+    CTRL->>SVC: CreateTodoListAsync(payload)
+    SVC->>DB: INSERT TodoList
+    SVC->>DB: INSERT SyncEvent (outbound)
+
+    Note over SVC,NTF: Notificación realtime
+    SVC->>NTF: PublishAsync(TodoRealtimeEvent)
+    Note right of NTF: EventType: TodoListCreated<br/>Source: LocalApi<br/>Payload: {id, name, ...}
+    NTF->>HUB: SendAsync("todoUpdated", event)
+    HUB-->>C: WebSocket push a todos
+
+    SVC-->>CTRL: TodoList
+    CTRL-->>U: 201 Created
+</pre>
+</div>
+
+<h3>2.1 Eventos emitidos por cada operación</h3>
+
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart LR
+    subgraph "TodoListsService"
+        A1["CreateTodoListAsync"] -->|"TodoListCreated"| OUT
+        A2["UpdateTodoListAsync"] -->|"TodoListUpdated"| OUT
+        A3["DeleteTodoListAsync"] -->|"TodoListDeleted"| OUT
+    end
+
+    subgraph "ItemsService"
+        B1["CreateItemAsync"] -->|"ItemCreated"| OUT
+        B2["UpdateItemAsync"] -->|"ItemUpdated"| OUT
+        B3["DeleteItemAsync"] -->|"ItemDeleted"| OUT
+    end
+
+    OUT["SignalRTodoRealtimeNotifier<br/>→ SendAsync('todoUpdated', event)"]
+    OUT --> WS["Clients.All<br/>(WebSocket broadcast)"]
+
+    style OUT fill:#7c3aed,stroke:#7c3aed,color:#fff
+    style WS fill:#0f766e,stroke:#0f766e,color:#fff
+</pre>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Flujo desde Inbound Sync (Hangfire → SignalR)</h2>
+<p><span class="badge badge-inbound">Source: InboundSync</span> El <code>InboundSyncJob</code> acumula eventos durante toda la reconciliación y los emite en batch al final.</p>
+
+<div class="diagram-container">
+<pre class="mermaid">
+sequenceDiagram
+    participant HF as Hangfire (cada 1 min)
+    participant INB as InboundSyncJob
+    participant EXT as ExternalApi
+    participant DB as SQL Server
+    participant NTF as SignalRTodoRealtimeNotifier
+    participant C as Clientes WebSocket
+
+    HF->>INB: ProcessAsync()
+    INB->>EXT: GET /todolists
+    EXT-->>INB: [{id, name, items[]}, ...]
+
+    Note over INB: Procesar cada lista e item
+
+    loop Upsert TodoLists + Items
+        INB->>DB: INSERT / UPDATE entidades
+        Note over INB: Acumular en List&lt;TodoRealtimeEvent&gt;
+    end
+
+    loop Soft-delete faltantes
+        INB->>DB: UPDATE IsDeleted = true
+        Note over INB: Acumular TodoListDeleted / ItemDeleted
+    end
+
+    INB->>DB: SaveChangesAsync()
+
+    Note over INB,NTF: Agregar evento resumen
+    Note right of INB: EventType: InboundSyncCompleted<br/>Source: InboundSync<br/>Payload: {changed: N}
+
+    INB->>NTF: PublishManyAsync(allEvents)
+
+    loop Para cada evento acumulado
+        NTF->>C: SendAsync("todoUpdated", event)
+    end
+
+    Note over C: El cliente recibe N+1 eventos:<br/>N cambios individuales +<br/>1 InboundSyncCompleted
+</pre>
+</div>
+
+<div class="card card-purple">
+    <p><strong>Patrón Batch:</strong> A diferencia del flujo local (que emite 1 evento por operación), el inbound acumula todos los eventos en una lista durante el procesamiento y los envía todos juntos al final con <code>PublishManyAsync</code>. Esto asegura que los eventos solo se emiten si la transacción de DB fue exitosa.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Estructura del TodoRealtimeEvent</h2>
+
+<div class="diagram-container">
+<pre class="mermaid">
+graph LR
+    subgraph TodoRealtimeEvent
+        direction TB
+        F1["EventType : string"]
+        F2["EntityType : string"]
+        F3["EntityId : long?"]
+        F4["TodoListId : long?"]
+        F5["Source : string"]
+        F6["OccurredAt : DateTimeOffset"]
+        F7["Payload : object?"]
+        F8["CorrelationId : string?"]
+    end
+
+    subgraph "TodoRealtimeEventTypes (static)"
+        direction TB
+        E1["TodoListCreated"]
+        E2["TodoListUpdated"]
+        E3["TodoListDeleted"]
+        E4["ItemCreated"]
+        E5["ItemUpdated"]
+        E6["ItemDeleted"]
+        E7["InboundSyncCompleted"]
+    end
+
+    subgraph "TodoRealtimeSources (static)"
+        direction TB
+        S1["LocalApi"]
+        S2["InboundSync"]
+    end
+
+    F1 -.->|"usa valores de"| E1
+    F5 -.->|"usa valores de"| S1
+
+    style TodoRealtimeEvent fill:#ede9fe,stroke:#7c3aed
+    style F1 fill:#fff,stroke:#7c3aed
+    style F2 fill:#fff,stroke:#7c3aed
+    style F3 fill:#fff,stroke:#7c3aed
+    style F4 fill:#fff,stroke:#7c3aed
+    style F5 fill:#fff,stroke:#7c3aed
+    style F6 fill:#fff,stroke:#7c3aed
+    style F7 fill:#fff,stroke:#7c3aed
+    style F8 fill:#fff,stroke:#7c3aed
+    style E7 fill:#e0f2fe,stroke:#0891b2
+</pre>
+</div>
+
+<table>
+    <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+    <tbody>
+        <tr><td><code>EventType</code></td><td>Tipo del evento: <code>TodoListCreated</code>, <code>ItemUpdated</code>, <code>InboundSyncCompleted</code>, etc.</td></tr>
+        <tr><td><code>EntityType</code></td><td><code>"TodoList"</code>, <code>"Item"</code>, o <code>"Sync"</code> (para el evento resumen).</td></tr>
+        <tr><td><code>EntityId</code></td><td>Id local de la entidad afectada.</td></tr>
+        <tr><td><code>TodoListId</code></td><td>Id de la lista padre (permite filtrar en el cliente por lista).</td></tr>
+        <tr><td><code>Source</code></td><td><code>"LocalApi"</code> si viene de REST, <code>"InboundSync"</code> si viene del polling.</td></tr>
+        <tr><td><code>OccurredAt</code></td><td>Timestamp del evento (default: <code>DateTimeOffset.UtcNow</code>).</td></tr>
+        <tr><td><code>Payload</code></td><td>Entidad completa serializada (TodoList o Item) o metadata del sync.</td></tr>
+    </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Todos los Event Types y sus Orígenes</h2>
+
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart TD
+    subgraph "Source: LocalApi"
+        direction TB
+        L1["TodoListCreated"]
+        L2["TodoListUpdated"]
+        L3["TodoListDeleted"]
+        L4["ItemCreated"]
+        L5["ItemUpdated"]
+        L6["ItemDeleted"]
+    end
+
+    subgraph "Source: InboundSync"
+        direction TB
+        I1["TodoListCreated"]
+        I2["TodoListUpdated"]
+        I3["TodoListDeleted"]
+        I4["ItemCreated"]
+        I5["ItemUpdated"]
+        I6["ItemDeleted"]
+        I7["InboundSyncCompleted"]
+    end
+
+    L1 & L2 & L3 & L4 & L5 & L6 --> HUB
+    I1 & I2 & I3 & I4 & I5 & I6 & I7 --> HUB
+
+    HUB["TodoUpdatesHub<br/>'todoUpdated'<br/>→ Clients.All"]
+
+    style HUB fill:#7c3aed,stroke:#7c3aed,color:#fff
+    style I7 fill:#0891b2,stroke:#0891b2,color:#fff
+</pre>
+</div>
+
+<div class="card card-green">
+    <p><strong>Diferenciación por <code>Source</code>:</strong> El cliente puede usar el campo <code>Source</code> para distinguir si un cambio fue iniciado por un usuario local (<code>"LocalApi"</code>) o llegó del polling externo (<code>"InboundSync"</code>). Esto permite, por ejemplo, no mostrar una notificación redundante al usuario que originó la acción.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Infraestructura y Configuración</h2>
+
+<div class="diagram-container">
+<pre class="mermaid">
+flowchart TD
+    subgraph "Program.cs – Setup"
+        A["builder.Services.AddSignalR()"]
+        B["AddCors con<br/>Realtime:AllowedOrigins"]
+        C["AddScoped&lt;ITodoRealtimeNotifier,<br/>SignalRTodoRealtimeNotifier&gt;"]
+        D["app.MapHub&lt;TodoUpdatesHub&gt;<br/>('/hubs/todo-updates')"]
+        E["todoUpdatesHub.RequireCors<br/>(realtimeCorsPolicy)"]
+    end
+
+    A --> D
+    B --> E
+    C --> F["Inyectado en:<br/>TodoListsService<br/>ItemsService<br/>InboundSyncJob"]
+
+    subgraph "Fallback para Tests"
+        G["NoOpTodoRealtimeNotifier<br/>(no-op, sin SignalR)"]
+    end
+
+    F -.->|"null → fallback"| G
+
+    style A fill:#4338ca,stroke:#4338ca,color:#fff
+    style D fill:#4338ca,stroke:#4338ca,color:#fff
+</pre>
+</div>
+
+<div class="card card-accent">
+    <p><strong>CORS:</strong> Se configura via <code>Realtime:AllowedOrigins</code> en appsettings. Si no hay orígenes configurados, el CORS policy no se aplica. El hub requiere <code>AllowCredentials()</code> para el handshake de SignalR.</p>
+    <p><strong>Fallback:</strong> Los Services aceptan <code>ITodoRealtimeNotifier?</code> como parámetro opcional. Si es <code>null</code> (ej: en tests), se usa <code>NoOpTodoRealtimeNotifier</code> que no hace nada.</p>
+</div>
+
+</div>
+
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        sequence: {
+            mirrorActors: false,
+            actorMargin: 50,
+            messageMargin: 40,
+            noteMargin: 15,
+            width: 200
+        },
+        flowchart: {
+            curve: 'basis',
+            padding: 20
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 using TodoApi.Dtos;
 using TodoApi.Models;
+using TodoApi.Realtime;
 using TodoApi.Repositories;
 using TodoApi.Sync;
 
@@ -9,14 +10,17 @@ public class ItemsService : IItemsService
 {
     private readonly IItemsRepository _itemsRepository;
     private readonly ISyncEventPublisher _syncEventPublisher;
+    private readonly ITodoRealtimeNotifier _todoRealtimeNotifier;
 
     public ItemsService(
         IItemsRepository itemsRepository,
-        ISyncEventPublisher? syncEventPublisher = null
+        ISyncEventPublisher? syncEventPublisher = null,
+        ITodoRealtimeNotifier? todoRealtimeNotifier = null
     )
     {
         _itemsRepository = itemsRepository;
         _syncEventPublisher = syncEventPublisher ?? new NoOpSyncEventPublisher();
+        _todoRealtimeNotifier = todoRealtimeNotifier ?? new NoOpTodoRealtimeNotifier();
     }
 
     public async Task<IList<Item>?> GetItemsAsync(long todoListId)
@@ -60,6 +64,17 @@ public class ItemsService : IItemsService
             SyncEventTypes.Created,
             createdItem
         );
+        await _todoRealtimeNotifier.PublishAsync(
+            new TodoRealtimeEvent
+            {
+                EventType = TodoRealtimeEventTypes.ItemCreated,
+                EntityType = SyncEntityTypes.Item,
+                EntityId = createdItem.Id,
+                TodoListId = createdItem.TodoListId,
+                Source = TodoRealtimeSources.LocalApi,
+                Payload = createdItem,
+            }
+        );
 
         return createdItem;
     }
@@ -90,6 +105,17 @@ public class ItemsService : IItemsService
             SyncEventTypes.Updated,
             updatedItem
         );
+        await _todoRealtimeNotifier.PublishAsync(
+            new TodoRealtimeEvent
+            {
+                EventType = TodoRealtimeEventTypes.ItemUpdated,
+                EntityType = SyncEntityTypes.Item,
+                EntityId = updatedItem.Id,
+                TodoListId = updatedItem.TodoListId,
+                Source = TodoRealtimeSources.LocalApi,
+                Payload = updatedItem,
+            }
+        );
 
         return updatedItem;
     }
@@ -109,6 +135,17 @@ public class ItemsService : IItemsService
             item.Id,
             SyncEventTypes.Deleted,
             item
+        );
+        await _todoRealtimeNotifier.PublishAsync(
+            new TodoRealtimeEvent
+            {
+                EventType = TodoRealtimeEventTypes.ItemDeleted,
+                EntityType = SyncEntityTypes.Item,
+                EntityId = item.Id,
+                TodoListId = item.TodoListId,
+                Source = TodoRealtimeSources.LocalApi,
+                Payload = item,
+            }
         );
 
         return true;

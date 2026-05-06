@@ -1,5 +1,6 @@
 using TodoApi.Dtos;
 using TodoApi.Models;
+using TodoApi.Realtime;
 using TodoApi.Repositories;
 using TodoApi.Services;
 
@@ -11,7 +12,8 @@ public class ItemsServiceTests
     public async Task CreateItemAsync_WhenTodoListExists_PreservesSyncMetadata()
     {
         var repository = new FakeItemsRepository(todoListExists: true);
-        var service = new ItemsService(repository);
+        var notifier = new FakeTodoRealtimeNotifier();
+        var service = new ItemsService(repository, todoRealtimeNotifier: notifier);
         var createdAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
         var updatedAt = DateTimeOffset.Parse("2026-01-02T00:00:00Z");
 
@@ -33,6 +35,11 @@ public class ItemsServiceTests
         Assert.True(item.IsCompleted);
         Assert.Equal(createdAt, item.CreatedAt);
         Assert.Equal(updatedAt, item.UpdatedAt);
+        var realtimeEvent = Assert.Single(notifier.Events);
+        Assert.Equal(TodoRealtimeEventTypes.ItemCreated, realtimeEvent.EventType);
+        Assert.Equal(TodoRealtimeSources.LocalApi, realtimeEvent.Source);
+        Assert.Equal(item.Id, realtimeEvent.EntityId);
+        Assert.Equal(item.TodoListId, realtimeEvent.TodoListId);
     }
 
     [Fact]
@@ -97,6 +104,29 @@ public class ItemsServiceTests
             item.IsDeleted = true;
             item.DeletedAt = deletedAt;
             item.UpdatedAt = deletedAt;
+            return Task.CompletedTask;
+        }
+    }
+
+    private class FakeTodoRealtimeNotifier : ITodoRealtimeNotifier
+    {
+        public List<TodoRealtimeEvent> Events { get; } = new();
+
+        public Task PublishAsync(
+            TodoRealtimeEvent realtimeEvent,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.Add(realtimeEvent);
+            return Task.CompletedTask;
+        }
+
+        public Task PublishManyAsync(
+            IEnumerable<TodoRealtimeEvent> realtimeEvents,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.AddRange(realtimeEvents);
             return Task.CompletedTask;
         }
     }

@@ -1,5 +1,6 @@
 using TodoApi.Dtos;
 using TodoApi.Models;
+using TodoApi.Realtime;
 using TodoApi.Repositories;
 using TodoApi.Services;
 
@@ -11,7 +12,8 @@ public class TodoListsServiceTests
     public async Task CreateTodoListAsync_WhenSyncMetadataProvided_PreservesMetadata()
     {
         var repository = new FakeTodoListsRepository();
-        var service = new TodoListsService(repository);
+        var notifier = new FakeTodoRealtimeNotifier();
+        var service = new TodoListsService(repository, todoRealtimeNotifier: notifier);
         var createdAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
         var updatedAt = DateTimeOffset.Parse("2026-01-02T00:00:00Z");
 
@@ -31,6 +33,10 @@ public class TodoListsServiceTests
         Assert.Equal(updatedAt, todoList.UpdatedAt);
         Assert.False(todoList.IsDeleted);
         Assert.Null(todoList.DeletedAt);
+        var realtimeEvent = Assert.Single(notifier.Events);
+        Assert.Equal(TodoRealtimeEventTypes.TodoListCreated, realtimeEvent.EventType);
+        Assert.Equal(TodoRealtimeSources.LocalApi, realtimeEvent.Source);
+        Assert.Equal(todoList.Id, realtimeEvent.TodoListId);
     }
 
     [Fact]
@@ -89,6 +95,29 @@ public class TodoListsServiceTests
             todoList.IsDeleted = true;
             todoList.DeletedAt = deletedAt;
             todoList.UpdatedAt = deletedAt;
+            return Task.CompletedTask;
+        }
+    }
+
+    private class FakeTodoRealtimeNotifier : ITodoRealtimeNotifier
+    {
+        public List<TodoRealtimeEvent> Events { get; } = new();
+
+        public Task PublishAsync(
+            TodoRealtimeEvent realtimeEvent,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.Add(realtimeEvent);
+            return Task.CompletedTask;
+        }
+
+        public Task PublishManyAsync(
+            IEnumerable<TodoRealtimeEvent> realtimeEvents,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Events.AddRange(realtimeEvents);
             return Task.CompletedTask;
         }
     }

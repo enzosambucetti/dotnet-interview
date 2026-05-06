@@ -1,306 +1,214 @@
 # Synchronization Notes
 
-## Architecture
+## Purpose
 
-The solution uses Hangfire as the execution engine and `SyncEvents` as the application source of truth for outbound synchronization.
+This document captures the main design decisions behind the synchronization implementation: what technology was used, why it was chosen, what trade-offs were accepted, and what would change in a production cloud architecture.
 
-Hangfire owns scheduling and execution:
+Operational details such as commands, ports, endpoint catalogs, Postman usage, and local setup instructions live in `AGENTS.md`.
 
-- Enqueued jobs process outbound events.
-- A recurring job polls inbound changes from `ExternalApi` every 1 minute.
-- A recovery recurring job runs every 1 minute and re-enqueues retryable `SyncEvents`.
+## Architecture Decision
 
-`SyncEvents` owns business audit/state:
+The solution treats `TodoApi` as the local system of record and `ExternalApi` as an external provider that must eventually stay in sync.
 
-- Entity and operation being synchronized.
-- Payload snapshot.
-- Processing status.
-- Attempts and last error.
-- Correlation ID.
+The implementation uses two separate concepts:
 
-Hangfire job state should not be treated as the source of truth for sync state.
+- `SyncEvents` hold business sync state.
+- Hangfire executes and schedules work.
+
+This separation is intentional. Hangfire job state is useful operationally, but it should not be the source of truth for domain synchronization. The durable sync audit lives in the application database through `SyncEvents`, including entity type, operation, payload snapshot, status, attempts, last error, and correlation id.
+
 
 ## Why Hangfire
 
-Hangfire was chosen over a plain `BackgroundService` because this sync flow benefits from durable jobs, recurring jobs, retry recovery, and an operational dashboard.
+Hangfire was chosen for this challenge because it provides durable background jobs, recurring jobs, retry visibility, and a local dashboard without requiring cloud infrastructure.
 
-This is especially useful because inbound sync has no webhook/event source from `ExternalApi`, so the system polls every 1 minute.
+It is a pragmatic middle ground between a plain `BackgroundService` and a full cloud/event-driven architecture:
 
-Hangfire is also a pragmatic choice for this challenge: it keeps the solution self-contained, easy to run locally, and demonstrable without provisioning cloud infrastructure.
+- Better than a simple in-memory channel for this case because work survives process restarts.
+- Better than a raw timer because recurring jobs and operational status are visible.
+- Simpler than Azure Functions plus Service Bus for a local interview challenge.
 
-For a production cloud deployment, I would prefer an Azure-based architecture instead of running the synchronization workers inside the API process. A more production-oriented design would use:
+The trade-off is that synchronization workers run inside the API process. That is acceptable for a self-contained challenge, but it is not the preferred production architecture.
+
+## Visual Documentation
+
+The repository root includes Mermaid-based HTML documentation in Spanish for practical challenge walkthroughs:
+
+- `sync-architecture.html`: synchronization architecture, outbound/inbound flows, error handling, retries, reconciliation, and operational view.
+- `signalr-architecture.html`: local self-hosted SignalR architecture, event payloads, local API events, inbound sync events, and frontend connection expectations.
+
+These files are intended for demos, review, and explaining the system flow during the challenge. They are not generated build artifacts and should be kept aligned with `NOTES.md` and `AGENTS.md` when sync or realtime behavior changes.
+
+## Production Direction
+
+For production, I would move synchronization execution out of the API process and into Azure-managed workers.
+
+The proposed cloud architecture would use:
 
 - Azure Service Bus topics or queues for outbound sync events.
-- Azure Functions or Durable Functions triggered asynchronously by Service Bus messages.
-- Durable Functions orchestrations for multi-step sync workflows that need retries, compensation, or reconciliation.
-- Timer-triggered Azure Functions for inbound polling when the external provider does not expose webhooks.
-- Azure SQL as the application database and durable state store for local entities and sync event audit.
-- Application Insights for distributed tracing, metrics, dashboards, and alerting.
-- Azure Key Vault for connection strings, external API settings, and secrets.
-- Managed Identity for Azure resource access.
+- Azure Functions or Durable Functions for asynchronous sync processing.
+- Timer-triggered Azure Functions for inbound polling while the external provider has no webhook/event contract.
+- Azure SQL for domain data and sync audit state.
+- Application Insights for traces, metrics, dashboards, and alerts.
+- Key Vault and Managed Identity for secrets and Azure resource access.
 
-In that version, the local API would persist the domain change and publish an outbound sync message. A Service Bus-triggered function would process the message, call the external API, update sync metadata, and move unrecoverable messages to a dead-letter flow for investigation.
+In that model, `TodoApi` would persist the local mutation in Azure SQL and publish an outbound sync message to Service Bus. A Service Bus-triggered Function would consume the message, call the external API, and update the sync status in Azure SQL. Retryable failures would be retried by the Function/Service Bus pipeline, while exhausted or invalid messages would move to a dead-letter queue for investigation and replay.
 
-Additional Azure production concerns that are intentionally out of scope for this challenge:
+Inbound sync would be handled by a Timer-triggered Function. It would periodically read the external API, compare the external state with Azure SQL, and apply inserts, updates, or local soft deletes. If inbound changes need to notify clients, the Function could publish an internal event or call a notification service after the database update.
 
-- Service Bus dead-letter queue monitoring and replay tooling.
-- Idempotency keys or deduplication at the message and external API call level.
-- Poison message handling and max delivery count policies.
-- Durable orchestration state cleanup and retention policies.
-- Distributed locks or single-consumer guarantees for per-entity ordering.
-- Observability with correlation IDs across TodoApi, Service Bus, Functions, SQL, and ExternalApi.
-- Alerting on failed sync rates, dead-letter growth, retry exhaustion, and inbound polling failures.
-- Infrastructure-as-code for Azure resources, for example Bicep or Terraform.
-- CI/CD deployment separation for API, Functions, database migrations, and infrastructure.
+Durable Functions would be useful if the sync flow grows into a multi-step workflow that needs explicit orchestration, waiting, compensation, or reconciliation across several external calls. For the current challenge scope, a normal Service Bus-triggered Function plus a Timer-triggered Function would be enough.
 
-## Outbound Sync
+Additional production concerns would include dead-letter replay tooling, idempotency keys, poison message policies, per-entity ordering, distributed tracing, infrastructure-as-code, and CI/CD separation for API, workers, migrations, and infrastructure.
 
-Outbound is event-driven from local mutations:
+## High-Level Flow
 
-- `TodoListCreated` -> `POST /todolists`
-- `TodoListUpdated` -> `PATCH /todolists/{id}`
-- `TodoListDeleted` -> `DELETE /todolists/{id}`
-- `ItemCreated` -> `POST /todolists/{id}/todoitems`
-- `ItemUpdated` -> `PATCH /todolists/{listId}/todoitems/{itemId}`
-- `ItemDeleted` -> `DELETE /todolists/{listId}/todoitems/{itemId}`
+Outbound sync is event-driven from local mutations:
 
-The local service flow is:
+1. `TodoApi` persists the local change.
+2. `TodoApi` creates a `SyncEvent`.
+3. Hangfire enqueues an outbound job for that `SyncEvent`.
+4. The outbound job calls `ExternalApi`.
+5. The job updates local sync metadata, such as `ExternalId`, and completes or fails the `SyncEvent`.
 
-1. Persist the local mutation.
-2. Create a `SyncEvent`.
-3. Enqueue a Hangfire outbound job with the `SyncEvent.Id`.
+Inbound sync is polling-based because the external provider has no webhook or event source:
 
-The `SyncEvent` is the durable record of the synchronization work. Hangfire is only the execution mechanism that picks up that work.
+1. A recurring Hangfire job calls `ExternalApi`.
+2. The job imports new external lists/items.
+3. The job updates local data when external data changed.
+4. The job soft-deletes local records that previously had an `ExternalId` but no longer exist externally.
+5. Inbound-applied changes do not create outbound `SyncEvents`, preventing echo loops.
 
-The outbound job:
+Realtime UI updates are handled separately through self-hosted SignalR. Sync jobs and local API mutations publish events so connected clients can refresh from the REST API.
 
-- Reads the `SyncEvent`.
-- Marks it `Processing`.
-- Calls `ExternalApi`.
-- Updates `ExternalId` metadata after creates.
-- Marks the event `Completed` on success.
-- Marks retryable failures as `FailedRetryable` and stores `LastError`.
-- Marks deterministic non-retryable failures as `FailedTerminal`.
-- Treats external `DELETE 404` as idempotent success.
-- Treats external `CREATE`/`UPDATE 404` as a possible stale external reference and immediately runs inbound reconciliation.
+## Atomicity And Recovery
 
-## SyncEvents and Hangfire Atomicity
+The local domain mutation and the `SyncEvent` are saved before the Hangfire job is enqueued. The enqueue is not part of the exact same database transaction, so there is a small failure window where the local change and `SyncEvent` exist but the Hangfire job was not created.
 
-Local mutations persist the domain change and the `SyncEvent` before enqueueing the Hangfire job.
+That risk is mitigated by the recovery recurring job. It scans pending or retryable `SyncEvents` and re-enqueues them while they are still below the attempt limit.
 
-The Hangfire enqueue happens after `SaveChanges`, so it is not part of the same database transaction as the local mutation. This leaves a small failure window:
+This is an eventual-delivery approach, not a strict transactional outbox. A production-grade version could use a formal outbox dispatcher if exactly-once enqueue semantics were required.
 
-1. The local entity is saved.
-2. The `SyncEvent` is saved as `Pending`.
-3. The process crashes before the Hangfire job is enqueued.
+## Retry Policy
 
-If that happens, the change is not lost because the `SyncEvent` remains in the database. A recurring recovery job scans `Pending`, `FailedRetryable`, and legacy `Failed` events and re-enqueues them into Hangfire while `Attempts` is below the max attempt limit.
+Outbound sync owns retry classification through `SyncEvent.Status`:
 
-This provides eventual delivery without implementing a full transactional outbox. A production-grade version could replace this with a stricter outbox dispatcher if exactly-once enqueue semantics were required.
-
-## Inbound Sync
-
-Inbound is polling-based because `ExternalApi` has no webhook or events.
-
-The recurring job runs every 1 minute and:
-
-- Calls `GET /todolists`.
-- Imports new external lists and items.
-- Updates local lists/items when external values changed.
-- Soft-deletes local lists/items that previously had `ExternalId` values and no longer appear externally.
-- Does not generate outbound `SyncEvents`.
-
-This prevents inbound-applied changes from echoing back outbound.
-
-## Outbound Retry And Terminal Failures
-
-Outbound sync distinguishes retryable and terminal failures through `SyncEvent.Status`:
-
-- `Pending`: waiting to be processed or waiting on a local sync dependency.
+- `Pending`: waiting to run or waiting for a dependency.
 - `Processing`: currently running.
-- `Completed`: synchronized, canceled as obsolete, or resolved idempotently.
-- `FailedRetryable`: failed with a transient or potentially recoverable condition.
-- `FailedTerminal`: failed with a deterministic condition that should not be retried automatically.
-- `Failed`: legacy retryable status kept for existing rows.
+- `Completed`: synchronized, obsolete, or resolved idempotently.
+- `FailedRetryable`: recoverable failure eligible for recovery.
+- `FailedTerminal`: deterministic failure that should not retry automatically.
+- `Failed`: legacy retryable status kept for compatibility.
 
-The recovery job only re-enqueues `Pending`, `FailedRetryable`, and legacy `Failed` rows with attempts below the configured limit. It does not re-enqueue `FailedTerminal`.
+The recovery job only re-enqueues pending/retryable states.
 
-Examples of retryable failures:
+Inbound sync intentionally disables Hangfire automatic retries. Since inbound already polls every minute, failed inbound attempts should fail once and retry naturally on the next polling tick. This avoids building up scheduled retry jobs when `ExternalApi` is temporarily unavailable. Inbound also disables concurrent execution so slow polls do not overlap.
 
-- External `5xx`.
-- Timeout or `HttpRequestException`.
-- External `429` or request timeout.
-- Unresolved outbound `404` after inbound reconciliation.
+## Dependencies And Ordering
 
-Examples of terminal failures:
+Some outbound events require data created by earlier sync events:
 
-- Invalid local state that cannot be repaired by ordering, such as an update without `ExternalId` and without a pending create event.
-- External `4xx` contract failures other than the special cases handled by reconciliation.
-- Unsupported sync event type/entity combinations.
+- Item create/update needs the parent list `ExternalId`.
+- List update without `ExternalId` can wait for a pending list create.
+- Item update without `ExternalId` can wait for a pending item create.
 
-## Outbound Dependency And Coalescing Rules
+When a missing dependency is expected to be produced by another pending event, the event stays `Pending` and does not consume an attempt.
 
-Some outbound events depend on earlier events:
+Obsolete create/update events are completed without external calls when the local entity, item, or parent list was already soft-deleted.
 
-- Item create/update needs the parent `TodoList.ExternalId`.
-- TodoList update without `ExternalId` can wait for a pending TodoList create.
-- Item update without `ExternalId` can wait for a pending Item create.
+## Reconciliation
 
-When a dependency is missing but expected to be produced by another pending sync event, the event stays `Pending`, records `LastError`, and does not consume an attempt.
+Create operations are ambiguous when the external call succeeds but the response is lost. Retrying blindly can duplicate external records.
 
-Obsolete events are completed instead of sent out:
+For timeout, transport failure, external `5xx`, or external `409` during create, the outbound job runs inbound reconciliation before deciding whether to retry. Reconciliation matches by:
 
-- Create/update for a soft-deleted local TodoList.
-- Create/update for a soft-deleted local Item.
-- Create/update for an Item whose parent TodoList was soft-deleted or removed.
-
-Deletes without `ExternalId` are completed as local success because there is no known external target to delete.
-
-## Create Reconciliation By Source ID
-
-Create operations can be ambiguous: the external create may succeed but the response can be lost because of a timeout or transport failure. Retrying the create blindly can duplicate external data.
-
-For outbound create timeout, transport failure, external `5xx`, or external `409`, the job runs inbound reconciliation before deciding the event failed. Inbound correlates by:
-
-- `ExternalId` when available.
+- Existing local `ExternalId`.
 - External `source_id` matching local `SourceId`.
-- External `source_id` matching the local numeric `Id` as string.
+- External `source_id` matching the local numeric id as a string.
 
-If reconciliation links the local entity to an external record, the create `SyncEvent` is marked `Completed`. If not, the failure is classified as retryable or terminal according to the error type.
+If reconciliation links the local entity to an external record, the sync event is completed. Otherwise, the original failure is classified as retryable or terminal.
+
+Outbound create/update `404` is also reconciled. If inbound confirms that the external record disappeared and the local record is now soft-deleted, the outbound event completes instead of retrying to exhaustion.
 
 ## Conflict Policy
 
-The first implementation uses a conservative timestamp policy:
+The current conflict policy is intentionally conservative:
 
-- If external data changed and local `UpdatedAt` is newer than external `updated_at`, the job logs a conflict and skips overwriting local data.
+- If external data changed but local `UpdatedAt` is newer than external `updated_at`, inbound logs the conflict and does not overwrite local data.
 - Otherwise inbound applies the external change locally.
 
-This avoids silent data loss but does not yet provide automatic conflict resolution.
+This avoids silent data loss, but it is not a full conflict-resolution system.
 
-Future improvement: add explicit per-entity sync checkpoint metadata such as `LastSyncedAt`/hashes for more precise “changed since last sync” detection.
+Future improvement: add explicit per-entity sync checkpoints, such as `LastSyncedAt`, version hashes, or provider revision ids, to distinguish local-only changes from already-synchronized state more precisely.
 
-## Deletes
+## Delete Policy
 
-Local deletes are soft deletes:
+Local deletes are soft deletes so local history and reconciliation remain possible.
 
-- `IsDeleted = true`
-- `DeletedAt = UtcNow`
-- `UpdatedAt = DeletedAt`
+Outbound deletes are sent as hard deletes to `ExternalApi`, because the external contract does not expose soft delete semantics.
 
-Outbound delete sends hard delete requests to `ExternalApi`.
+Inbound treats missing external records as remote hard deletes and represents that locally as soft deletes.
 
-Inbound missing external records are interpreted as remote hard deletes and represented locally as soft deletes.
+This means normal local API reads hide deleted records, while sync logic can still inspect them with query filters disabled.
 
-When outbound create/update receives `404`, the job does not blindly retry as if it were transient. It runs inbound reconciliation immediately. If inbound confirms that the target local entity, or its parent list for item events, was deleted externally and is now soft-deleted locally, the outbound `SyncEvent` is marked `Completed`. If reconciliation does not confirm deletion, the event is marked `FailedRetryable` and remains eligible for recovery retries until the configured attempt limit.
+## HTTP Errors And Logging
 
-## Item Creation Assumption
+The API uses RFC 7807-style `ProblemDetails` for HTTP errors. This keeps client-facing errors predictable and avoids leaking raw exception messages. Controlled errors include stable error codes and trace ids, while unexpected exceptions include an error id that can be used to find the matching server log.
 
-The original challenge external API does not expose standalone item creation. It only creates items as part of `POST /todolists`.
+Background sync failures are handled differently. They are not returned to an HTTP client, so their durable state belongs in `SyncEvents`: status, attempts, `LastError`, and correlation id. Logs provide operational context, while `SyncEvents` remain the business audit trail.
 
-For this local test environment, `ExternalApi` includes a pragmatic extension:
+Current logging is intentionally simple for the challenge: console logging with warning/error entries for HTTP errors, external API retries, sync reconciliation, terminal/retryable failures, and inbound conflicts. In production, this should move to centralized observability such as Application Insights/OpenTelemetry with dashboards and alerts for failed sync rates, retry exhaustion, and dead-letter/replay flows.
+
+## External Contract Assumption
+
+The original challenge external API creates items only as part of `POST /todolists`; it does not expose standalone item creation for an existing list.
+
+For this local test environment, `ExternalApi` includes one intentional extension:
 
 ```http
 POST /todolists/{todolistId}/todoitems
 ```
 
-This endpoint exists so outbound `ItemCreated` can be exercised end to end. In a real external contract, this would need to be added officially or replaced with another agreed strategy.
+This endpoint exists so outbound `ItemCreated` can be exercised end to end. It is not treated as part of the original published external contract.
 
-This is an intentional extension over the original OpenAPI document, not an assumption that the published external contract already supports it. Without this endpoint, 
-creating an item in an already-synced list would require a less direct workaround, such as provider-side contract changes or resubmitting/rebuilding list state, both of which have worse correctness and performance characteristics.
+Without that extension, creating an item in an already-synced list would require either a provider contract change or a less direct workaround such as rebuilding list state, which has worse correctness and performance characteristics.
 
-## Running
+## Testing Strategy
 
-Start fake external API:
+The automated tests focus on deterministic behavior rather than waiting for real Hangfire timers.
 
-```powershell
-dotnet run --project ExternalApi --launch-profile http
-```
+The E2E tests host `TodoApi` and `ExternalApi` in process, call the local HTTP API, execute the sync job directly, and verify the opposite API over HTTP. This validates the business flow, persistence, HTTP client, and API-to-API contract without timing-dependent sleeps.
 
-Start SQL Server in Docker:
+Hangfire itself is treated as execution infrastructure. Its configuration and job scheduling behavior are covered separately from the core sync business rules.
 
-```powershell
-docker compose -f .devcontainer/docker-compose.yml up -d sqlserver
-```
+Manual validation through Postman remains useful for demonstrating the full local runtime with SQL Server, Hangfire dashboard, both APIs, and real HTTP calls.
 
-Apply migrations:
+Postman collection exists in the root directory, all scenarios are covered.
 
-```powershell
-dotnet ef database update --project TodoApi --startup-project TodoApi
-```
+## Dev Container Support
 
-Run local API:
+The solution is intended to run through dev containers even if development was done locally. The backend dev container owns the .NET runtime and SQL Server dependency; `TodoApi` and `ExternalApi` are run from terminals inside that container. The frontend dev container owns the Node/Vite runtime and reaches the backend through `host.docker.internal:5083`, with Vite proxying both REST (`/api`) and SignalR (`/hubs`) traffic.
 
-```powershell
-dotnet run --project TodoApi --launch-profile TodoApi
-```
+Detailed dev container startup steps live in each repository's `AGENTS.md`.
 
-Hangfire dashboard is available in Development:
+## Challenge Coverage Checklist
 
-```http
-/hangfire
-```
-
-## Postman Manual Validation
-
-Manual API and sync flows are available in:
-
-```text
-TodoApi/PostmanCollections/TodoApi.Sync.postman_collection.json
-```
-
-The collection is named `TodoApi Sync Manual Tests` and includes:
-
-- `TodoApi - Base Cases` for local API CRUD.
-- `ExternalApi - Base Cases` for fake external API calls.
-- `Sync Flow - Manual E2E` for outbound and inbound synchronization checks.
-
-The manual sync flow is useful for exploratory validation around Hangfire and real HTTP calls between the two running APIs. Automated E2E tests remain deterministic by invoking sync jobs directly instead of waiting for scheduled Hangfire execution.
-
-## Tests
-
-Run:
-
-```powershell
-dotnet build
-dotnet test
-```
-
-Covered scenarios include:
-
-- Local mutations create `SyncEvents`.
-- Outbound create updates local `ExternalId`.
-- Outbound retryable/terminal failures increment `Attempts`, set `LastError`, and use `FailedRetryable` or `FailedTerminal`.
-- External delete `404` completes successfully.
-- Outbound create/update `404` runs inbound reconciliation before deciding whether to complete or retry.
-- Item events wait for parent `ExternalId`.
-- Obsolete create/update events over soft-deleted local records complete without external calls.
-- Ambiguous create failures reconcile by `source_id`.
-- Inbound imports external data.
-- Inbound updates local data.
-- Inbound soft-deletes missing external data.
-- Inbound does not generate outbound events.
-
-## E2E In-Process Tests
-
-The E2E sync tests use `WebApplicationFactory` to run `TodoApi` and `ExternalApi` in process.
-
-They intentionally do not wait for Hangfire recurring/enqueued execution because that would make the tests timing-dependent. Instead, each test:
-
-1. Calls the local HTTP API.
-2. Reads the created `SyncEvent`.
-3. Executes `IOutboundSyncJob.ProcessAsync(syncEventId)` or `IInboundSyncJob.ProcessAsync(...)` directly.
-4. Verifies the other API over HTTP.
-
-This does not test Hangfire scheduling itself. It tests the deterministic business flow, persistence, HTTP client, and API-to-API contract. Hangfire is covered by configuration and smaller sync job tests.
-
-Current E2E cases:
-
-- `POST /api/todolists` in `TodoApi` creates the list in `ExternalApi` after outbound job execution.
-- `POST /api/todolists/{id}/items` in `TodoApi` creates the item in `ExternalApi` after outbound job execution.
-- Creating a list directly in `ExternalApi` imports it into `TodoApi` after inbound job execution.
-
-## Local Detail Reads
-
-`GET /api/todolists/{id}` returns the selected local list with its active `items` embedded. This mirrors the external read shape for detail inspection while keeping `GET /api/todolists` as a lightweight list endpoint without embedded items.
-
-This is an intentional challenge/demo convenience. It makes it easier to show synchronization flows and validate imported or outbound-created items from a single local API request. For a production API, embedding child collections in the list detail endpoint should be evaluated more carefully because it can hide query cost, complicate pagination/filtering, and couple list reads to item payload shape. A production version would usually keep item reads explicit, or expose expansion/pagination options instead of always embedding all items.
+- Local Todo API persists TodoLists and Items.
+- Fake `ExternalApi` is included for local development and deterministic tests.
+- External API base contract matches the challenge documentation for list create/update/delete, item update/delete, and list reads with embedded items.
+- Local-only `ExternalApi` item-create extension is documented as intentional.
+- Outbound synchronization covers local create/update/delete of TodoLists and Items.
+- Inbound synchronization covers external create/update/delete detection through polling.
+- `SyncEvents` provide durable business sync state.
+- Hangfire provides local execution, recurring jobs, recovery, and dashboard visibility.
+- Recovery mitigates the non-transactional enqueue window after local persistence.
+- Inbound polling avoids automatic retry buildup and overlapping polls.
+- Local deletes are soft deletes; external deletes are hard deletes.
+- Missing external records are reconciled locally as soft deletes.
+- Outbound `404` handling performs inbound reconciliation before retrying.
+- Ambiguous outbound creates reconcile by `source_id` to reduce duplicate external records.
+- Conflict behavior is documented, including the current limitations.
+- HTTP errors use `ProblemDetails`; sync errors use `SyncEvents` plus logs.
+- Automated tests cover service behavior, sync jobs, and deterministic in-process E2E sync scenarios.
+- Postman collection exists for manual runtime validation.
+- Backend and frontend dev container startup paths are documented.
+- Production Azure direction and out-of-scope operational concerns are documented.
