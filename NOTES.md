@@ -190,6 +190,14 @@ The solution is intended to run through dev containers even if development was d
 
 Detailed dev container startup steps live in each repository's `AGENTS.md`.
 
+## AI Assistance
+
+Relevant AI conversations were saved in the root `AIConversations` folder to keep implementation context, design discussion, and decision history available for review.
+
+Codex CLI was used as the primary coding agent, selecting GPT models according to the workload and task complexity. Windsurf was also used as an agentic AI IDE to vary model behavior when useful, including Claude Opus for workloads that benefited from a different model profile.
+
+On the frontend, Vercel React/design skills were used to guide React implementation and UI decisions toward established best practices. The referenced skill source is `skills.sh`.
+
 ## Challenge Coverage Checklist
 
 - Local Todo API persists TodoLists and Items.
