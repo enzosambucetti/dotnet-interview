@@ -228,7 +228,7 @@ graph TB
 </div>
 
 <div class="card card-accent">
-    <p><strong>Patrón arquitectónico:</strong> Event Sourcing ligero con <strong>Transactional Outbox</strong>. Cada mutación local genera un <code>SyncEvent</code> persistido en la misma transacción que la entidad, y luego se encola un job de Hangfire para procesarlo asincrónicamente. El flujo inbound usa <strong>Polling periódico</strong> con reconciliación completa.</p>
+    <p><strong>Patrón arquitectónico:</strong> sincronización event-driven con una tabla durable de <code>SyncEvents</code> y jobs de Hangfire. No es Event Sourcing: el estado actual vive en <code>TodoLists</code> y <code>Items</code>, y los eventos se usan para integración, auditoría, retries y recovery. Tampoco es un Transactional Outbox estricto: la mutación local y el <code>SyncEvent</code> se persisten antes del enqueue, pero el enqueue de Hangfire ocurre después y se mitiga con un recovery job. El flujo inbound usa <strong>Polling periódico</strong> con reconciliación completa.</p>
 </div>
 
 <!-- ============================================================ -->
@@ -262,7 +262,7 @@ graph TB
     </tbody>
 </table>
 
-<h3>2.3 SyncEvent (Transactional Outbox)</h3>
+<h3>2.3 SyncEvent (Sync Event Table / Outbox-like)</h3>
 <table>
     <thead><tr><th>Campo</th><th>Tipo</th><th>Propósito</th></tr></thead>
     <tbody>
@@ -281,7 +281,7 @@ graph TB
 
 <!-- ============================================================ -->
 <h2 id="outbound">3. Flujo Outbound – Local → API Externa</h2>
-<p><span class="badge badge-outbound">Outbound</span> Se dispara <strong>sincrónicamente</strong> en cada mutación local (Create/Update/Delete). El Service persiste la entidad y el <code>SyncEvent</code> en la misma transacción, luego encola un job de Hangfire.</p>
+<p><span class="badge badge-outbound">Outbound</span> Se dispara <strong>sincrónicamente</strong> en cada mutación local (Create/Update/Delete). El Service persiste la entidad, luego crea un <code>SyncEvent</code> durable, y después encola un job de Hangfire. El enqueue no forma parte de la misma transacción exacta, por eso existe el recovery job.</p>
 
 <div class="diagram-container">
 <pre class="mermaid">
@@ -298,8 +298,10 @@ sequenceDiagram
     U->>CTRL: POST /api/todolists {name: "Work"}
     CTRL->>SVC: CreateTodoListAsync(payload)
     SVC->>DB: INSERT TodoList
+    Note over SVC,DB: SaveChangesAsync de la entidad
     SVC->>PUB: PublishAsync("TodoList", id, "Created", entity)
     PUB->>DB: INSERT SyncEvent (Status=Pending)
+    Note over PUB,DB: SaveChangesAsync separado para SyncEvent
     PUB->>HF: BackgroundJob.Enqueue&lt;IOutboundSyncJob&gt;(syncEventId)
     SVC-->>CTRL: TodoList creado
     CTRL-->>U: 201 Created
@@ -335,6 +337,7 @@ sequenceDiagram
 sequenceDiagram
     actor U as Usuario
     participant SVC as ItemsService
+    participant PUB as SyncEventPublisher
     participant DB as SQL Server
     participant HF as Hangfire
     participant OUT as OutboundSyncJob
@@ -342,8 +345,9 @@ sequenceDiagram
 
     U->>SVC: CreateItemAsync(todoListId, {name, isCompleted})
     SVC->>DB: INSERT Item
-    SVC->>DB: INSERT SyncEvent (EntityType=Item, EventType=Created)
-    SVC->>HF: Enqueue OutboundSyncJob(syncEventId)
+    SVC->>PUB: PublishAsync("Item", id, "Created", entity)
+    PUB->>DB: INSERT SyncEvent (EntityType=Item, EventType=Created)
+    PUB->>HF: Enqueue OutboundSyncJob(syncEventId)
 
     HF->>OUT: ProcessAsync(syncEventId)
     OUT->>DB: SELECT Item WHERE Id=entityId
@@ -540,7 +544,7 @@ flowchart TD
 
     D -->|"404 + EventType=Deleted"| C
     D -->|"404 (no delete)"| E["Ejecutar InboundSyncJob<br/>(reconciliación)"]
-    E --> F{"¿Entidad borrada<br/>tras reconciliación?"}
+    E --> F{"¿Entidad reconciliada<br/>con ExternalId o soft-deleted?"}
     F -->|Sí| C
     F -->|No| G["Status = FailedRetryable"]
 
@@ -623,11 +627,12 @@ flowchart LR
     <ol>
         <li>El <code>SyncEvent</code> queda en <code>FailedRetryable</code>.</li>
         <li>El <code>SyncEventRecoveryJob</code> lo re-encola.</li>
-        <li>En el siguiente intento, el create outbound verifica <code>ExternalId</code>. Como es <code>null</code>, intenta crear de nuevo.</li>
-        <li>Si la API externa rechaza con 409 Conflict o 5xx, se activa <code>TryCompleteCreateAfterReconciliationAsync</code>.</li>
+        <li>En el siguiente intento, el create outbound verifica <code>ExternalId</code>. Como es <code>null</code>, puede intentar crear de nuevo.</li>
+        <li>Si la API externa rechaza con 409 Conflict, falla con timeout/5xx, o inbound encuentra el recurso por <code>source_id</code>, se activa la reconciliación.</li>
         <li>Se ejecuta un <strong>InboundSync</strong> que trae el snapshot externo y asigna el <code>ExternalId</code> correctamente.</li>
         <li>El evento se marca como <code>Completed</code>.</li>
     </ol>
+    <p><strong>Limitación:</strong> si el proveedor externo permite duplicados con el mismo <code>source_id</code> y no devuelve un error reconciliable, un retry podría crear duplicados. Para producción, antes de repetir un create sin <code>ExternalId</code> convendría ejecutar una reconciliación preventiva.</p>
 </div>
 
 <h3>9.2 Conflicto de versiones entre APIs</h3>
@@ -656,7 +661,7 @@ flowchart LR
 <div class="card card-warn">
     <p>Dado que el <code>OutboundSyncJob</code> puede disparar un <code>InboundSyncJob</code> inline (reconciliación), y el <code>InboundSyncJob</code> corre como <code>RecurringJob</code>, existe la posibilidad de ejecución concurrente. Mitigaciones:</p>
     <ul>
-        <li>Ambos operan sobre el mismo <code>TodoContext</code> scoped. El EF Change Tracker detecta conflictos de concurrencia.</li>
+        <li>La mitigación principal es la idempotencia del flujo, la búsqueda por <code>ExternalId</code>/<code>SourceId</code> y la comparación por <code>UpdatedAt</code>. No hay control optimista fuerte con <code>rowversion</code>, por lo que conflictos concurrentes reales no se detectan automáticamente a nivel EF.</li>
         <li>El inbound es idempotente: upsert basado en la cascada de búsqueda. Procesar dos veces el mismo snapshot externo no genera duplicados.</li>
         <li>El outbound verifica <code>ExternalId</code> antes de crear: si el inbound ya lo asignó, el create se omite.</li>
     </ul>
@@ -711,7 +716,7 @@ stateDiagram-v2
     <table>
         <thead><tr><th>Propiedad</th><th>Mecanismo</th></tr></thead>
         <tbody>
-            <tr><td><strong>At-least-once delivery</strong></td><td>Transactional outbox + RecoveryJob con re-enqueue</td></tr>
+            <tr><td><strong>Entrega eventual best-effort</strong></td><td>Tabla durable de SyncEvents + RecoveryJob con re-enqueue</td></tr>
             <tr><td><strong>Idempotencia outbound</strong></td><td>Guards de ExternalId, soft-delete, status final + reconciliación inbound</td></tr>
             <tr><td><strong>Deduplicación inbound</strong></td><td>Cascada ExternalId → SourceId → Id con <code>IgnoreQueryFilters</code></td></tr>
             <tr><td><strong>Resolución de conflictos</strong></td><td>Last-Write-Wins basado en <code>UpdatedAt</code></td></tr>
