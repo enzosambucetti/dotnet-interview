@@ -84,10 +84,20 @@ public class InboundSyncJob : IInboundSyncJob
         else
         {
             todoList.ExternalId ??= externalList.Id;
-            todoList.SourceId ??= externalList.SourceId;
 
-            if (!todoList.IsDeleted)
+            if (todoList.IsDeleted)
             {
+                if (!TryRestoreDeletedTodoList(todoList, externalList))
+                {
+                    return;
+                }
+
+                realtimeEvents.Add(CreateTodoListEvent(TodoRealtimeEventTypes.TodoListCreated, todoList));
+            }
+            else
+            {
+                todoList.SourceId ??= externalList.SourceId;
+
                 if (ApplyExternalListUpdate(todoList, externalList))
                 {
                     realtimeEvents.Add(CreateTodoListEvent(TodoRealtimeEventTypes.TodoListUpdated, todoList));
@@ -121,6 +131,31 @@ public class InboundSyncJob : IInboundSyncJob
         todoList.SourceId = externalList.SourceId;
         todoList.Name = externalList.Name ?? string.Empty;
         todoList.UpdatedAt = externalList.UpdatedAt;
+        return true;
+    }
+
+    private bool TryRestoreDeletedTodoList(TodoList todoList, ExternalTodoList externalList)
+    {
+        if (!ShouldRestoreDeletedEntity(todoList.DeletedAt, externalList.CreatedAt))
+        {
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Inbound sync restored soft-deleted TodoList from newer external data. LocalId: {LocalId}; ExternalId: {ExternalId}; DeletedAt: {DeletedAt}; ExternalCreatedAt: {ExternalCreatedAt}",
+            todoList.Id,
+            externalList.Id,
+            todoList.DeletedAt,
+            externalList.CreatedAt
+        );
+
+        todoList.ExternalId = externalList.Id;
+        todoList.SourceId = externalList.SourceId;
+        todoList.Name = externalList.Name ?? string.Empty;
+        todoList.CreatedAt = externalList.CreatedAt;
+        todoList.UpdatedAt = externalList.UpdatedAt;
+        todoList.IsDeleted = false;
+        todoList.DeletedAt = null;
         return true;
     }
 
@@ -163,10 +198,20 @@ public class InboundSyncJob : IInboundSyncJob
             else
             {
                 item.ExternalId ??= externalItem.Id;
-                item.SourceId ??= externalItem.SourceId;
 
-                if (!item.IsDeleted)
+                if (item.IsDeleted)
                 {
+                    if (!TryRestoreDeletedItem(item, externalItem, todoList.Id))
+                    {
+                        continue;
+                    }
+
+                    realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemCreated, item));
+                }
+                else
+                {
+                    item.SourceId ??= externalItem.SourceId;
+
                     if (ApplyExternalItemUpdate(item, externalItem))
                     {
                         realtimeEvents.Add(CreateItemEvent(TodoRealtimeEventTypes.ItemUpdated, item));
@@ -209,6 +254,41 @@ public class InboundSyncJob : IInboundSyncJob
         item.IsCompleted = externalItem.Completed;
         item.UpdatedAt = externalItem.UpdatedAt;
         return true;
+    }
+
+    private bool TryRestoreDeletedItem(Item item, ExternalTodoItem externalItem, long todoListId)
+    {
+        if (!ShouldRestoreDeletedEntity(item.DeletedAt, externalItem.CreatedAt))
+        {
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Inbound sync restored soft-deleted Item from newer external data. LocalId: {LocalId}; ExternalId: {ExternalId}; DeletedAt: {DeletedAt}; ExternalCreatedAt: {ExternalCreatedAt}",
+            item.Id,
+            externalItem.Id,
+            item.DeletedAt,
+            externalItem.CreatedAt
+        );
+
+        item.ExternalId = externalItem.Id;
+        item.SourceId = externalItem.SourceId;
+        item.Name = externalItem.Description ?? string.Empty;
+        item.IsCompleted = externalItem.Completed;
+        item.CreatedAt = externalItem.CreatedAt;
+        item.UpdatedAt = externalItem.UpdatedAt;
+        item.TodoListId = todoListId;
+        item.IsDeleted = false;
+        item.DeletedAt = null;
+        return true;
+    }
+
+    private static bool ShouldRestoreDeletedEntity(
+        DateTimeOffset? deletedAt,
+        DateTimeOffset externalCreatedAt
+    )
+    {
+        return deletedAt.HasValue && deletedAt.Value < externalCreatedAt;
     }
 
     private async Task SoftDeleteMissingExternalListsAsync(

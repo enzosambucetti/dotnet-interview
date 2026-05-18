@@ -10,7 +10,6 @@ public class ExternalTodoStore : IExternalTodoStore
     private List<TodoList> _todoLists = new();
     private int _nextItemNumber;
     private int _nextListNumber;
-    private int _nextTimestampMinute;
 
     public ExternalTodoStore()
     {
@@ -230,13 +229,12 @@ public class ExternalTodoStore : IExternalTodoStore
 
             _nextListNumber = 3;
             _nextItemNumber = 4;
-            _nextTimestampMinute = 1;
         }
     }
 
-    private DateTimeOffset NextTimestamp()
+    private static DateTimeOffset NextTimestamp()
     {
-        return SeedTimestamp.AddMinutes(_nextTimestampMinute++);
+        return DateTimeOffset.UtcNow;
     }
 
     private string NextListId()

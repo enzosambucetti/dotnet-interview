@@ -79,6 +79,7 @@ builder.Services.AddScoped<ISyncEventPublisher, SyncEventPublisher>();
 builder.Services.AddScoped<IOutboundSyncJob, OutboundSyncJob>();
 builder.Services.AddScoped<IInboundSyncJob, InboundSyncJob>();
 builder.Services.AddScoped<ISyncEventRecoveryJob, SyncEventRecoveryJob>();
+builder.Services.AddScoped<ISyncRepairJob, SyncRepairJob>();
 builder.Services.AddScoped<ITodoRealtimeNotifier, SignalRTodoRealtimeNotifier>();
 builder.Services.AddScoped<NoOpSyncJobScheduler>();
 builder.Services.AddScoped<HangfireSyncJobScheduler>();
@@ -135,6 +136,11 @@ if (hangfireEnabled)
         "todoapi-sync-event-recovery",
         job => job.ProcessAsync(CancellationToken.None),
         Cron.Minutely()
+    );
+    RecurringJob.AddOrUpdate<ISyncRepairJob>(
+        "todoapi-sync-repair-manual",
+        job => job.ProcessAsync(CancellationToken.None),
+        Cron.Never()
     );
 }
 

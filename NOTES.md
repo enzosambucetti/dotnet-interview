@@ -88,6 +88,19 @@ That risk is mitigated by the recovery recurring job. It scans pending or retrya
 
 This is an eventual-delivery approach, not a strict transactional outbox. A production-grade version could use a formal outbox dispatcher if exactly-once enqueue semantics were required.
 
+## Manual Sync Repair
+
+`SyncRepairJob` exists for operator-driven recovery only. It is registered in Hangfire as `todoapi-sync-repair-manual` with a never-running schedule, so it is visible from the dashboard and can be executed with `Trigger now`, but it does not run automatically.
+
+The job repairs two practical failure cases:
+
+- Retryable outbound events that reached the max attempt limit are reset to `Pending`, with `Attempts=0` and `LastError` cleared, then enqueued again.
+- Active local `TodoList` or `Item` rows without `ExternalId` and without an existing create `SyncEvent` get a new `Created` event and are enqueued.
+
+Before creating missing outbound events, the job runs inbound reconciliation best effort. This reduces duplicate creates by giving the system a chance to link local rows to existing external records by `source_id`.
+
+The job intentionally does not reopen `FailedTerminal`, `Completed`, or `Processing` events. Terminal failures should be inspected and corrected explicitly before replay.
+
 ## Retry Policy
 
 Outbound sync owns retry classification through `SyncEvent.Status`:
@@ -148,7 +161,13 @@ Outbound deletes are sent as hard deletes to `ExternalApi`, because the external
 
 Inbound treats missing external records as remote hard deletes and represents that locally as soft deletes.
 
+If inbound sees an external record whose `ExternalId` matches a local soft-deleted entity, it restores the local entity only when `DeletedAt < external.created_at`. That case usually means the fake in-memory `ExternalApi` reused an id after reset/reseed and the external record is newer than the local tombstone. Restore clears `IsDeleted`/`DeletedAt` and refreshes the local fields from the external payload.
+
+When `DeletedAt >= external.created_at`, inbound leaves the local entity soft-deleted and does not import child items under it. This can be a normal race where a local delete has happened but the outbound delete has not reached `ExternalApi` yet, so it is not logged as a conflict.
+
 This means normal local API reads hide deleted records, while sync logic can still inspect them with query filters disabled.
+
+`ExternalApi` keeps deterministic ids and deterministic seed timestamps for repeatable demos, but runtime creates/updates use `DateTimeOffset.UtcNow`. This lets inbound compare external runtime records against local `DeletedAt` values without treating new Postman-created data as if it came from the January 2026 seed.
 
 ## HTTP Errors And Logging
 
@@ -211,7 +230,7 @@ On the frontend, Vercel React/design skills were used to guide React implementat
 ## Challenge Coverage Checklist
 
 - Local Todo API persists TodoLists and Items.
-- Fake `ExternalApi` is included for local development and deterministic tests.
+- Fake `ExternalApi` is included for local development with deterministic seed data and generated IDs.
 - External API base contract matches the challenge documentation for list create/update/delete, item update/delete, and list reads with embedded items.
 - Local-only `ExternalApi` item-create extension is documented as intentional.
 - Outbound synchronization covers local create/update/delete of TodoLists and Items.
