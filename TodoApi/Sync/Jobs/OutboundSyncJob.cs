@@ -47,6 +47,16 @@ public class OutboundSyncJob : IOutboundSyncJob
         syncEvent.LastError = null;
         await _context.SaveChangesAsync(cancellationToken);
 
+        _logger.LogInformation(
+            "Outbound sync attempt started. SyncEventId: {SyncEventId}; CorrelationId: {CorrelationId}; EntityType: {EntityType}; EntityId: {EntityId}; EventType: {EventType}; Attempt: {Attempt}",
+            syncEvent.Id,
+            syncEvent.CorrelationId,
+            syncEvent.EntityType,
+            syncEvent.EntityId,
+            syncEvent.EventType,
+            syncEvent.Attempts
+        );
+
         try
         {
             await ProcessEventAsync(syncEvent, cancellationToken);
@@ -324,18 +334,40 @@ public class OutboundSyncJob : IOutboundSyncJob
         CancellationToken cancellationToken
     )
     {
-        _logger.LogError(
-            exception,
-            "Outbound sync failed. SyncEventId: {SyncEventId}; CorrelationId: {CorrelationId}",
-            syncEvent.Id,
-            syncEvent.CorrelationId
-        );
-
         syncEvent.Status = retryable
             ? SyncEventStatuses.FailedRetryable
             : SyncEventStatuses.FailedTerminal;
         syncEvent.LastError = exception.Message;
         await _context.SaveChangesAsync(cancellationToken);
+
+        if (retryable)
+        {
+            _logger.LogWarning(
+                exception,
+                "Outbound sync attempt failed with retryable status. SyncEventId: {SyncEventId}; CorrelationId: {CorrelationId}; EntityType: {EntityType}; EntityId: {EntityId}; EventType: {EventType}; Attempt: {Attempt}; Status: {Status}",
+                syncEvent.Id,
+                syncEvent.CorrelationId,
+                syncEvent.EntityType,
+                syncEvent.EntityId,
+                syncEvent.EventType,
+                syncEvent.Attempts,
+                syncEvent.Status
+            );
+        }
+        else
+        {
+            _logger.LogError(
+                exception,
+                "Outbound sync attempt failed with terminal status. SyncEventId: {SyncEventId}; CorrelationId: {CorrelationId}; EntityType: {EntityType}; EntityId: {EntityId}; EventType: {EventType}; Attempt: {Attempt}; Status: {Status}",
+                syncEvent.Id,
+                syncEvent.CorrelationId,
+                syncEvent.EntityType,
+                syncEvent.EntityId,
+                syncEvent.EventType,
+                syncEvent.Attempts,
+                syncEvent.Status
+            );
+        }
     }
 
     private async Task MarkPendingAsync(

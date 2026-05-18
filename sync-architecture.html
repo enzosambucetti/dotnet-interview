@@ -391,6 +391,10 @@ sequenceDiagram
 
         alt No existe localmente
             INB->>DB: INSERT TodoList {ExternalId, SourceId, Name, ...}
+        else Existe soft-deleted y DeletedAt < external.created_at
+            INB->>DB: RESTORE TodoList<br/>IsDeleted=false, DeletedAt=null<br/>refresh fields from external
+        else Existe soft-deleted y DeletedAt >= external.created_at
+            Note over INB: Mantener soft-deleted<br/>posible ventana delete local -> outbound delete
         else Existe y no está soft-deleted
             Note over INB: ApplyExternalListUpdate()
             alt local.UpdatedAt > external.UpdatedAt
@@ -407,6 +411,10 @@ sequenceDiagram
 
             alt No existe localmente
                 INB->>DB: INSERT Item {ExternalId, SourceId, Name, ...}
+            else Existe soft-deleted y DeletedAt < external.created_at
+                INB->>DB: RESTORE Item<br/>IsDeleted=false, DeletedAt=null<br/>refresh fields from external
+            else Existe soft-deleted y DeletedAt >= external.created_at
+                Note over INB: Mantener soft-deleted
             else Existe y no está soft-deleted
                 alt local.UpdatedAt > external.UpdatedAt
                     Note over INB: CONFLICTO: Local gana
@@ -434,6 +442,7 @@ sequenceDiagram
         <li><strong>Por <code>Id</code> local</strong> – Si <code>source_id</code> es un <code>long</code> parseable, se intenta como PK local.</li>
     </ol>
     <p>Se usa <code>IgnoreQueryFilters()</code> en todas las búsquedas para incluir entidades soft-deleted y evitar re-creaciones.</p>
+    <p>Si el match encuentra una entidad local soft-deleted, inbound la restaura solo cuando <code>DeletedAt &lt; external.created_at</code>. Si <code>DeletedAt &gt;= external.created_at</code>, se mantiene el soft-delete y no se importan hijos debajo de esa lista, porque puede ser la ventana normal entre un delete local y el outbound delete.</p>
 </div>
 
 <h3>4.2 Detección de Deletes Externos</h3>

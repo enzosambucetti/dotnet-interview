@@ -133,6 +133,140 @@ public class InboundSyncJobTests
         Assert.NotNull(item.DeletedAt);
     }
 
+    [Fact]
+    public async Task ProcessAsync_WhenExternalDataIsNewerThanLocalSoftDelete_RestoresLocalData()
+    {
+        using var context = CreateContext();
+        var deletedAt = DateTimeOffset.Parse("2026-01-01T00:10:00Z");
+        var externalCreatedAt = DateTimeOffset.Parse("2026-01-01T00:11:00Z");
+        context.TodoList.Add(
+            new TodoList
+            {
+                Id = 1,
+                ExternalId = "ext-list-1",
+                SourceId = "old-source",
+                Name = "Old deleted list",
+                CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                UpdatedAt = deletedAt,
+                IsDeleted = true,
+                DeletedAt = deletedAt,
+            }
+        );
+        context.Items.Add(
+            new Item
+            {
+                Id = 1,
+                ExternalId = "ext-item-1",
+                SourceId = "old-item-source",
+                TodoListId = 1,
+                Name = "Old deleted item",
+                CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                UpdatedAt = deletedAt,
+                IsDeleted = true,
+                DeletedAt = deletedAt,
+            }
+        );
+        await context.SaveChangesAsync();
+        var externalClient = new FakeExternalTodoApiClient
+        {
+            TodoLists = new List<ExternalTodoList>
+            {
+                new()
+                {
+                    Id = "ext-list-1",
+                    SourceId = null,
+                    Name = "external para inbound",
+                    CreatedAt = externalCreatedAt,
+                    UpdatedAt = externalCreatedAt,
+                    Items = new List<ExternalTodoItem>
+                    {
+                        new()
+                        {
+                            Id = "ext-item-1",
+                            SourceId = null,
+                            Description = "external para inbound",
+                            Completed = false,
+                            CreatedAt = externalCreatedAt,
+                            UpdatedAt = externalCreatedAt,
+                        },
+                    },
+                },
+            },
+        };
+        var job = CreateJob(context, externalClient);
+
+        await job.ProcessAsync(CancellationToken.None);
+
+        var todoList = await context.TodoList.SingleAsync();
+        var item = await context.Items.SingleAsync();
+        Assert.False(todoList.IsDeleted);
+        Assert.Null(todoList.DeletedAt);
+        Assert.Null(todoList.SourceId);
+        Assert.Equal("external para inbound", todoList.Name);
+        Assert.Equal(externalCreatedAt, todoList.CreatedAt);
+        Assert.Equal(externalCreatedAt, todoList.UpdatedAt);
+        Assert.False(item.IsDeleted);
+        Assert.Null(item.DeletedAt);
+        Assert.Null(item.SourceId);
+        Assert.Equal("external para inbound", item.Name);
+        Assert.Equal(externalCreatedAt, item.CreatedAt);
+        Assert.Equal(externalCreatedAt, item.UpdatedAt);
+        Assert.Empty(context.SyncEvents);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_WhenLocalSoftDeleteIsNewerThanExternalCreate_DoesNotRestoreOrImportItems()
+    {
+        using var context = CreateContext();
+        var externalCreatedAt = DateTimeOffset.Parse("2026-01-01T00:11:00Z");
+        context.TodoList.Add(
+            new TodoList
+            {
+                Id = 1,
+                ExternalId = "ext-list-1",
+                Name = "Local deleted after external create",
+                CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+                UpdatedAt = DateTimeOffset.Parse("2026-01-01T00:12:00Z"),
+                IsDeleted = true,
+                DeletedAt = DateTimeOffset.Parse("2026-01-01T00:12:00Z"),
+            }
+        );
+        await context.SaveChangesAsync();
+        var externalClient = new FakeExternalTodoApiClient
+        {
+            TodoLists = new List<ExternalTodoList>
+            {
+                new()
+                {
+                    Id = "ext-list-1",
+                    Name = "External still visible before outbound delete",
+                    CreatedAt = externalCreatedAt,
+                    UpdatedAt = externalCreatedAt,
+                    Items = new List<ExternalTodoItem>
+                    {
+                        new()
+                        {
+                            Id = "ext-item-1",
+                            Description = "Should not be imported under deleted parent",
+                            Completed = false,
+                            CreatedAt = externalCreatedAt,
+                            UpdatedAt = externalCreatedAt,
+                        },
+                    },
+                },
+            },
+        };
+        var job = CreateJob(context, externalClient);
+
+        await job.ProcessAsync(CancellationToken.None);
+
+        Assert.Empty(await context.TodoList.ToListAsync());
+        Assert.Empty(await context.Items.ToListAsync());
+        var deletedList = await context.TodoList.IgnoreQueryFilters().SingleAsync();
+        Assert.True(deletedList.IsDeleted);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-01T00:12:00Z"), deletedList.DeletedAt);
+    }
+
     private static InboundSyncJob CreateJob(
         TodoContext context,
         IExternalTodoApiClient externalTodoApiClient,

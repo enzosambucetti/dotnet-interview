@@ -139,7 +139,7 @@ Use `-IncludeHangfire` only when no TodoApi/Hangfire server instance is actively
 
 ### ExternalApi
 
-`ExternalApi` does not use a database. It stores deterministic data in memory through a singleton store and resets on process restart.
+`ExternalApi` does not use a database. It stores in-memory data through a singleton store and resets on process restart. Seed rows and generated IDs are deterministic; runtime mutation timestamps use current UTC time.
 
 Run:
 
@@ -391,7 +391,7 @@ External API behavior:
 - `POST /todolists` creates a list and optional items in one request.
 - `POST /todolists/{todolistId}/todoitems` is a local fake API extension for creating a standalone item under an existing list. It exists to exercise outbound item sync in the challenge implementation.
 - External IDs are deterministic strings like `ext-list-001` and `ext-item-001`.
-- Seed timestamps and runtime mutation timestamps are deterministic for repeatable sync tests.
+- Seed timestamps are deterministic. Runtime create/update timestamps use `DateTimeOffset.UtcNow` so manual Postman data can be compared correctly against local soft-delete tombstones.
 
 ### ExternalApi Seed Data
 
@@ -448,7 +448,11 @@ After reset, deterministic counters are:
 
 - Next list id: `ext-list-003`.
 - Next item id: `ext-item-004`.
-- Next mutation timestamp: `2026-01-01T00:01:00+00:00`, then one minute is added per mutation.
+
+Runtime timestamps after reset:
+
+- Creates and updates performed after startup/reset use `DateTimeOffset.UtcNow`.
+- The fixed `2026-01-01T00:00:00+00:00` timestamp is only for seed records.
 
 ## Persistence And Migrations
 
@@ -596,6 +600,18 @@ TodoApi uses Hangfire for synchronization execution:
 - A recovery recurring job runs every 1 minute and re-enqueues retryable `Pending`, `FailedRetryable`, and legacy `Failed` sync events while attempts are below the max.
 - Outbound create/update `404` responses run inbound reconciliation immediately. If inbound confirms external deletion through local soft delete, the outbound event is completed instead of retried to the max attempt limit.
 - `FailedTerminal` events are not re-enqueued automatically.
+- `todoapi-sync-repair-manual` is a manual-only repair job. It is registered in Hangfire with `Cron.Never()` so it appears in the dashboard but never runs on a timer.
+- Inbound can restore a local soft-deleted list/item only when the local `DeletedAt` is earlier than the external `created_at`. In that case it clears `IsDeleted`/`DeletedAt` and refreshes the entity fields from the external payload.
+- If `DeletedAt >= external.created_at`, inbound leaves the local entity soft-deleted and does not import child items under it. This can be a normal local-delete/outbound-delete race, so do not log it as a conflict.
+
+Manual repair job:
+
+- Run from Hangfire Dashboard: `Recurring Jobs -> todoapi-sync-repair-manual -> Trigger now`.
+- Runs inbound reconciliation first, best effort, so existing external records can be linked before creating missing outbound events.
+- Reopens exhausted retryable sync events with `Attempts >= 5` by setting them back to `Pending`, resetting `Attempts` to `0`, clearing `LastError`, and enqueuing outbound processing again.
+- Creates missing `Created` `SyncEvents` for active local `TodoList` and `Item` rows that have no `ExternalId` and no existing create event.
+- Does not reopen `Completed`, `Processing`, or `FailedTerminal` events.
+- Does not run automatically; it is an operational tool for manual recovery cases such as a local row without a `SyncEvent` or an event that exhausted attempts while `ExternalApi` was unavailable.
 
 Development dashboard:
 
